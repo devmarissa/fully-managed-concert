@@ -1,0 +1,9 @@
+# Project place file
+/fully-managed-cabinets.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+# keep my secrets secret!
+.env
