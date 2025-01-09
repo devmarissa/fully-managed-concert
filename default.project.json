@@ -1,5 +1,5 @@
 {
-  "name": "fully-managed",
+  "name": "fully-managed-cabinets",
   "tree": {
     "$className": "DataModel",
     
@@ -7,8 +7,13 @@
       "Shared": {
         "$path": "src/shared"
       },
-      "Assets": {
-      	"$path": "assets"
+      "init": {
+        "$path": "assets/init.luau",
+        "$className": "ModuleScript"
+      },
+      "Models": {
+        "$path": "assets/models",
+        "$className": "Folder"
       }
     },
     
@@ -27,11 +32,13 @@
     },
     
     "Workspace": {
-    	"$path": "map/Workspace.rbxm"
+      "$className": "Workspace",
+      "$path": "map/Workspace.rbxm"
     },
     
     "Lighting": {
-    	"$path": "map/Lighting.rbxm"
+      "$className": "Lighting",
+      "$path": "map/Lighting.rbxm"
     },
     
     "SoundService": {

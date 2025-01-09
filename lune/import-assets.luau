@@ -13,31 +13,38 @@ if not fs.isDir("./assets") then
     fs.writeDir("./assets")
 end
 
--- Create empty containers
-local workspaceModel = roblox.Instance.new("Model")
-local lightingModel = roblox.Instance.new("Model")
-local assetsModel = roblox.Instance.new("Model")
-
 -- Copy children to our containers
 if game.Workspace then
+    local container = roblox.Instance.new("Folder")
+    container.Name = "Contents"
     for _, child in game.Workspace:GetChildren() do
-        child:Clone().Parent = workspaceModel
+        child:Clone().Parent = container
     end
-    fs.writeFile("./map/Workspace.rbxm", roblox.serializeModel({workspaceModel}))
+    fs.writeFile("./map/Workspace.rbxm", roblox.serializeModel({container}))
 end
 
 if game.Lighting then
+    local container = roblox.Instance.new("Folder")
+    container.Name = "Contents"
     for _, child in game.Lighting:GetChildren() do
-        child:Clone().Parent = lightingModel
+        child:Clone().Parent = container
     end
-    fs.writeFile("./map/Lighting.rbxm", roblox.serializeModel({lightingModel}))
+    fs.writeFile("./map/Lighting.rbxm", roblox.serializeModel({container}))
 end
 
 if game.ReplicatedStorage and game.ReplicatedStorage:FindFirstChild("Assets") then
-    for _, child in game.ReplicatedStorage.Assets:GetChildren() do
-        child:Clone().Parent = assetsModel
+    -- Create models directory if it doesn't exist
+    if not fs.isDir("./assets/models") then
+        fs.writeDir("./assets/models")
     end
-    fs.writeFile("./assets/Models.rbxm", roblox.serializeModel({assetsModel}))
+
+    -- Save each model individually
+    for _, child in game.ReplicatedStorage.Assets:GetChildren() do
+        local clone = child:Clone()
+        -- Save the model
+        local fileName = string.format("./assets/models/%s.rbxm", clone.Name)
+        fs.writeFile(fileName, roblox.serializeModel({clone}))
+    end
 else
     print("Warning: ReplicatedStorage.Assets not found in place file")
 end
