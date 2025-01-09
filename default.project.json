@@ -26,13 +26,35 @@
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "Client": {
-          "$path": "src/client"
+          "$path": "src/client",
+          "init.client": {
+            "$path": "src/client/init.client.luau",
+            "$className": "LocalScript"
+          }
         }
       }
     },
     
     "Workspace": {
       "$className": "Workspace",
+      "Cabinets": {
+        "$className": "Folder",
+        "SpaceInvaders": {
+          "$className": "Folder"
+        },
+        "Galaga": {
+          "$className": "Folder"
+        },
+        "Snake": {
+          "$className": "Folder"
+        },
+        "MonacoGP": {
+          "$className": "Folder"
+        },
+        "Pong": {
+          "$className": "Folder"
+        }
+      },
       "$path": "map/Workspace.rbxm"
     },
     
