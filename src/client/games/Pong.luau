@@ -12,7 +12,7 @@ local updateScoreEvent = remotes:WaitForChild("UpdateScore") :: RemoteEvent
 
 -- Constants (adjusted to match original Pong)
 local PADDLE_WIDTH = 10
-local PADDLE_HEIGHT = 60
+local PADDLE_HEIGHT = 40
 local PADDLE_MARGIN = 20
 local BALL_SIZE = 10
 local INITIAL_BALL_SPEED = 200  -- Initial speed
@@ -177,23 +177,69 @@ function Pong:resetBall()
 end
 
 function Pong:updateAI(dt, ballPos, state)
-    -- In attract mode, AI simply follows the ball with a slight delay
     local aiSpeed = AI_SPEED
     local leftVelocity = 0
     local rightVelocity = 0
     
-    -- Simple following behavior
     if state.gameState == "attract" then
-        -- Left paddle
-        local leftDiff = ballPos.Y - state.leftPaddlePos
-        if math.abs(leftDiff) > 0.02 then
-            leftVelocity = math.sign(leftDiff) * aiSpeed
+        -- Predict ball position
+        local function predictBallY(paddleX)
+            local timeToReach
+            if state.ballVelocity.X > 0 then
+                timeToReach = (paddleX - ballPos.X) / (state.ballVelocity.X / self.props.resolution.X)
+            else
+                timeToReach = (ballPos.X - paddleX) / (-state.ballVelocity.X / self.props.resolution.X)
+            end
+            
+            if timeToReach <= 0 then return ballPos.Y end
+            
+            -- Calculate predicted Y including bounces
+            local predictedY = ballPos.Y + (state.ballVelocity.Y / self.props.resolution.Y) * timeToReach
+            local bounces = 0
+            while (predictedY < 0 or predictedY > 1) and bounces < 4 do
+                if predictedY < 0 then
+                    predictedY = -predictedY
+                elseif predictedY > 1 then
+                    predictedY = 2 - predictedY
+                end
+                bounces = bounces + 1
+            end
+            return predictedY
         end
         
-        -- Right paddle
-        local rightDiff = ballPos.Y - state.rightPaddlePos
-        if math.abs(rightDiff) > 0.02 then
-            rightVelocity = math.sign(rightDiff) * aiSpeed
+        -- Calculate target positions with slight offset
+        local leftPaddleX = PADDLE_MARGIN / self.props.resolution.X
+        local rightPaddleX = 1 - PADDLE_MARGIN / self.props.resolution.X - PADDLE_WIDTH / self.props.resolution.X
+        
+        -- Add small random offset to make it look more natural
+        local function getAIVelocity(currentPos, targetY)
+            local offset = math.sin(state.time * 2) * 0.03
+            local adjustedTarget = targetY + offset
+            local diff = adjustedTarget - currentPos
+            
+            -- Move more precisely when ball is close
+            local threshold = math.abs(state.ballVelocity.X) > 300 and 0.02 or 0.05
+            if math.abs(diff) > threshold then
+                return math.sign(diff) * aiSpeed
+            end
+            return 0
+        end
+        
+        -- Update paddle velocities based on prediction
+        if state.ballVelocity.X < 0 then
+            local leftTarget = predictBallY(leftPaddleX)
+            leftVelocity = getAIVelocity(state.leftPaddlePos, leftTarget)
+        else
+            -- Keep left paddle in center when ball moving away
+            leftVelocity = getAIVelocity(state.leftPaddlePos, 0.5)
+        end
+        
+        if state.ballVelocity.X > 0 then
+            local rightTarget = predictBallY(rightPaddleX)
+            rightVelocity = getAIVelocity(state.rightPaddlePos, rightTarget)
+        else
+            -- Keep right paddle in center when ball moving away
+            rightVelocity = getAIVelocity(state.rightPaddlePos, 0.5)
         end
     end
     
@@ -207,15 +253,51 @@ function Pong:updateGame(dt)
         -- Update time
         newState.time = state.time + dt
         
-        -- Update paddle positions using velocities
-        local halfPaddleHeight = (PADDLE_HEIGHT / self.props.resolution.Y) / 2
+        -- Update paddle velocities
+        if state.gameState == "attract" then
+            -- AI controls both paddles
+            newState.leftPaddleVelocity, newState.rightPaddleVelocity = self:updateAI(dt, state.ballPosition, state)
+        else
+            -- Player controls - only update if we're the player
+            if state.p1Present and self.props.controller.p1State.player == Players.LocalPlayer then
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                    newState.leftPaddleVelocity = -PADDLE_SPEED
+                elseif UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                    newState.leftPaddleVelocity = PADDLE_SPEED
+                else
+                    newState.leftPaddleVelocity = 0
+                end
+            end
+            if state.p2Present and self.props.controller.p2State.player == Players.LocalPlayer then
+                if UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+                    newState.rightPaddleVelocity = -PADDLE_SPEED
+                elseif UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+                    newState.rightPaddleVelocity = PADDLE_SPEED
+                else
+                    newState.rightPaddleVelocity = 0
+                end
+            end
+        end
+        
+        -- Convert all sizes to screen space once
+        local screenPaddleHeight = PADDLE_HEIGHT / self.props.resolution.Y
+        local screenPaddleWidth = PADDLE_WIDTH / self.props.resolution.X
+        local screenBallSize = BALL_SIZE / math.min(self.props.resolution.X, self.props.resolution.Y)
+        
+        -- Calculate absolute boundaries for paddles
+        local minPaddleY = screenBallSize + screenPaddleHeight/2  -- Keep paddle fully in bounds
+        local maxPaddleY = 1 - screenBallSize - screenPaddleHeight/2
+        
+        -- Update and clamp paddle positions
         newState.leftPaddlePos = math.clamp(
             state.leftPaddlePos + (state.leftPaddleVelocity * dt) / self.props.resolution.Y,
-            halfPaddleHeight, 1 - halfPaddleHeight
+            minPaddleY,
+            maxPaddleY
         )
         newState.rightPaddlePos = math.clamp(
             state.rightPaddlePos + (state.rightPaddleVelocity * dt) / self.props.resolution.Y,
-            halfPaddleHeight, 1 - halfPaddleHeight
+            minPaddleY,
+            maxPaddleY
         )
         
         -- Calculate new ball position
@@ -224,23 +306,85 @@ function Pong:updateGame(dt)
             state.ballPosition.Y + (state.ballVelocity.Y * dt) / self.props.resolution.Y
         )
         
-        -- Ball collision with top/bottom (account for ball size)
-        local halfBallSize = (BALL_SIZE / self.props.resolution.Y) / 2
-        if newBallPos.Y - halfBallSize <= 0 or newBallPos.Y + halfBallSize >= 1 then
+        -- Ball collision with top/bottom walls
+        if newBallPos.Y <= screenBallSize or newBallPos.Y >= 1 - screenBallSize then
             newState.ballVelocity = Vector2.new(
                 state.ballVelocity.X,
                 -state.ballVelocity.Y
             )
+            -- Clamp ball position
             newBallPos = Vector2.new(
                 newBallPos.X,
-                math.clamp(newBallPos.Y, halfBallSize, 1 - halfBallSize)
+                math.clamp(newBallPos.Y, screenBallSize, 1 - screenBallSize)
             )
         end
         
-        -- Check for scoring (account for ball size)
-        if newBallPos.X - halfBallSize < -0.02 or newBallPos.X + halfBallSize > 1.02 then
+        -- Paddle positions in screen space
+        local leftPaddleX = PADDLE_MARGIN / self.props.resolution.X
+        local rightPaddleX = 1 - PADDLE_MARGIN / self.props.resolution.X - screenPaddleWidth
+        
+        -- Simple AABB collision check function
+        local function checkCollision(ballX, ballY, paddleX, paddleY)
+            -- Calculate box boundaries
+            local ballLeft = ballX - screenBallSize
+            local ballRight = ballX + screenBallSize
+            local ballTop = ballY - screenBallSize
+            local ballBottom = ballY + screenBallSize
+            
+            local paddleLeft = paddleX
+            local paddleRight = paddleX + screenPaddleWidth
+            local paddleTop = paddleY - screenPaddleHeight/2
+            local paddleBottom = paddleY + screenPaddleHeight/2
+            
+            -- Simple box overlap test
+            return ballRight >= paddleLeft and
+                   ballLeft <= paddleRight and
+                   ballBottom >= paddleTop and
+                   ballTop <= paddleBottom
+        end
+        
+        -- Left paddle collision
+        if state.ballVelocity.X < 0 and
+           checkCollision(newBallPos.X, newBallPos.Y, leftPaddleX, state.leftPaddlePos) then
+            
+            -- Calculate hit position (-1 to 1)
+            local hitPos = (newBallPos.Y - state.leftPaddlePos) / (screenPaddleHeight/2)
+            local angle = FIXED_ANGLES[math.abs(hitPos) > 0.5 and 2 or 1]
+            if hitPos < 0 then angle = -angle end
+            
+            -- Update speed and velocity
+            newState.currentBallSpeed = math.min(state.currentBallSpeed + SPEED_INCREASE, MAX_BALL_SPEED)
+            newState.ballVelocity = Vector2.new(
+                math.cos(angle) * newState.currentBallSpeed,
+                math.sin(angle) * newState.currentBallSpeed
+            )
+            
+            -- Place ball at paddle edge
+            newBallPos = Vector2.new(leftPaddleX + screenPaddleWidth + screenBallSize, newBallPos.Y)
+        end
+        
+        -- Right paddle collision
+        if state.ballVelocity.X > 0 and
+           checkCollision(newBallPos.X, newBallPos.Y, rightPaddleX, state.rightPaddlePos) then
+            
+            local hitPos = (newBallPos.Y - state.rightPaddlePos) / (screenPaddleHeight/2)
+            local angle = FIXED_ANGLES[math.abs(hitPos) > 0.5 and 2 or 1]
+            if hitPos < 0 then angle = -angle end
+            
+            newState.currentBallSpeed = math.min(state.currentBallSpeed + SPEED_INCREASE, MAX_BALL_SPEED)
+            newState.ballVelocity = Vector2.new(
+                -math.cos(angle) * newState.currentBallSpeed,
+                math.sin(angle) * newState.currentBallSpeed
+            )
+            
+            -- Place ball at paddle edge
+            newBallPos = Vector2.new(rightPaddleX - screenBallSize, newBallPos.Y)
+        end
+        
+        -- Check for scoring
+        if newBallPos.X <= screenBallSize or newBallPos.X >= 1 - screenBallSize then
             if state.gameState == "playing" then
-                if newBallPos.X < 0 then
+                if newBallPos.X < 0.5 then
                     newState.rightScore = state.rightScore + 1
                     updateScoreEvent:FireServer(newState.leftScore, newState.rightScore)
                     if newState.rightScore >= SCORE_TO_WIN then
@@ -258,72 +402,18 @@ function Pong:updateGame(dt)
                     end
                 end
             end
-            self:resetBall()
+            
+            -- Reset ball
+            local direction = newBallPos.X < 0.5 and 1 or -1
+            local angle = FIXED_ANGLES[1] * (math.random() > 0.5 and 1 or -1)
+            
+            newState.ballPosition = Vector2.new(0.5, 0.5)
+            newState.ballVelocity = Vector2.new(
+                math.cos(angle) * INITIAL_BALL_SPEED * direction,
+                math.sin(angle) * INITIAL_BALL_SPEED
+            )
+            newState.currentBallSpeed = INITIAL_BALL_SPEED
             return newState
-        end
-        
-        -- Ball collision with paddles
-        local paddleWidth = PADDLE_WIDTH / self.props.resolution.X
-        local paddleHeight = PADDLE_HEIGHT / self.props.resolution.Y
-        local ballWidth = BALL_SIZE / self.props.resolution.X
-        local leftPaddleX = PADDLE_MARGIN / self.props.resolution.X
-        local rightPaddleX = 1 - PADDLE_MARGIN / self.props.resolution.X - paddleWidth
-        
-        -- Helper function to check if ball overlaps with paddle
-        local function checkPaddleCollision(ballPos, paddleX, paddleY)
-            local ballLeft = ballPos.X - ballWidth/2
-            local ballRight = ballPos.X + ballWidth/2
-            local ballTop = ballPos.Y - ballWidth/2
-            local ballBottom = ballPos.Y + ballWidth/2
-            
-            local paddleLeft = paddleX
-            local paddleRight = paddleX + paddleWidth
-            local paddleTop = paddleY - paddleHeight/2
-            local paddleBottom = paddleY + paddleHeight/2
-            
-            return ballRight >= paddleLeft and
-                   ballLeft <= paddleRight and
-                   ballBottom >= paddleTop and
-                   ballTop <= paddleBottom
-        end
-        
-        -- Left paddle collision
-        if state.ballVelocity.X < 0 and
-           checkPaddleCollision(newBallPos, leftPaddleX, state.leftPaddlePos) and
-           not checkPaddleCollision(state.ballPosition, leftPaddleX, state.leftPaddlePos) then
-            
-            -- Use fixed angles based on where the ball hits the paddle
-            local hitPos = (newBallPos.Y - state.leftPaddlePos) / (paddleHeight / 2)
-            local angle = FIXED_ANGLES[math.abs(hitPos) > 0.5 and 2 or 1]
-            if hitPos < 0 then angle = -angle end
-            
-            -- Increase speed but cap it
-            newState.currentBallSpeed = math.min(state.currentBallSpeed + SPEED_INCREASE, MAX_BALL_SPEED)
-            
-            newState.ballVelocity = Vector2.new(
-                math.cos(angle) * newState.currentBallSpeed,
-                math.sin(angle) * newState.currentBallSpeed
-            )
-            newBallPos = Vector2.new(leftPaddleX + paddleWidth + ballWidth/2, newBallPos.Y)
-        end
-        
-        -- Right paddle collision
-        if state.ballVelocity.X > 0 and
-           checkPaddleCollision(newBallPos, rightPaddleX, state.rightPaddlePos) and
-           not checkPaddleCollision(state.ballPosition, rightPaddleX, state.rightPaddlePos) then
-            
-            local hitPos = (newBallPos.Y - state.rightPaddlePos) / (paddleHeight / 2)
-            local angle = FIXED_ANGLES[math.abs(hitPos) > 0.5 and 2 or 1]
-            if hitPos < 0 then angle = -angle end
-            
-            -- Increase speed but cap it
-            newState.currentBallSpeed = math.min(state.currentBallSpeed + SPEED_INCREASE, MAX_BALL_SPEED)
-            
-            newState.ballVelocity = Vector2.new(
-                -math.cos(angle) * newState.currentBallSpeed,
-                math.sin(angle) * newState.currentBallSpeed
-            )
-            newBallPos = Vector2.new(rightPaddleX - ballWidth/2, newBallPos.Y)
         end
         
         newState.ballPosition = newBallPos
