@@ -26,11 +26,7 @@
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "Client": {
-          "$path": "src/client",
-          "init.client": {
-            "$path": "src/client/init.client.luau",
-            "$className": "LocalScript"
-          }
+          "$path": "src/client"
         }
       }
     },
