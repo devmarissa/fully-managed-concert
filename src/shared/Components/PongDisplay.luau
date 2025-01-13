@@ -65,6 +65,14 @@ function PongDisplay:render()
             BorderSizePixel = 0,
         }),
 
+        -- Center line
+        CenterLine = Roact.createElement("Frame", {
+            Size = UDim2.new(0, 2, 1, 0),
+            Position = UDim2.fromScale(0.5, 0),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        }),
+
         -- Ball
         Ball = Roact.createElement("Frame", {
             Size = UDim2.new(0, BALL_SIZE, 0, BALL_SIZE),
@@ -76,6 +84,7 @@ function PongDisplay:render()
             ),
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
             BorderSizePixel = 0,
+            Visible = gameState.ballVisible ~= false,  -- Show ball unless explicitly hidden
         }),
 
         -- Score

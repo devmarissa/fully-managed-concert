@@ -8,12 +8,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CabinetEvents = require(ReplicatedStorage.Shared.CabinetEvents)
 
 -- Game constants
-local BALL_SPEED = 0.5 -- Units per second (relative coordinates)
-local PADDLE_SPEED = 0.3 -- Units per second
-local PADDLE_HEIGHT = 70 -- Pixels
-local PADDLE_WIDTH = 16 -- Pixels
-local BALL_SIZE = 16 -- Pixels
-local SCREEN_PADDING = 20 -- Pixels
+local BALL_SPEED = 0.3 -- Units per second (relative coordinates)
+local PADDLE_SPEED = 0.8 -- Units per second
+local PADDLE_HEIGHT = 0.2 -- Relative height
+local PADDLE_WIDTH = 0.02 -- Relative width
+local PADDLE_LEFT_X = 0.05  -- Move paddles closer to edges (5% from edge)
+local PADDLE_RIGHT_X = 0.95
+local INITIAL_BALL_SPEED = 0.3  -- Slower initial speed
+local MAX_BALL_SPEED = 0.8
+local BALL_SPEED_INCREMENT = 0.05
+local BALL_SIZE = 0.02 -- Relative size
+local SCREEN_PADDING = 0.05 -- Relative padding
 local FIXED_HEIGHT = 525 -- SurfaceGui height
 local FIXED_WIDTH = 858 -- SurfaceGui width
 
@@ -318,40 +323,38 @@ function PongGame:updateAttractMode(deltaTime: number)
     -- Update ball position
     self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
     
-    -- Check for top/bottom collisions
-    if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
-        self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
-        self.ballPosition = Vector2.new(
-            self.ballPosition.X,
-            self.ballPosition.Y <= 0 and 0 or 1
-        )
+    -- Check for top/bottom collisions with extended bottom boundary
+    if self.ballPosition.Y <= 0 then
+        -- Top collision
+        self.ballVelocity = Vector2.new(self.ballVelocity.X, math.abs(self.ballVelocity.Y))
+        self.ballPosition = Vector2.new(self.ballPosition.X, 0)
+    elseif self.ballPosition.Y >= 1.05 then  -- Extended bottom boundary
+        -- Bottom collision
+        self.ballVelocity = Vector2.new(self.ballVelocity.X, -math.abs(self.ballVelocity.Y))
+        self.ballPosition = Vector2.new(self.ballPosition.X, 1.05)
     end
     
-    -- Update AI paddle positions
+    -- Update AI paddles for attract mode
     self:updateAI(deltaTime)
     self:updateAI2(deltaTime)
     
     -- Check for paddle collisions
     self:checkPaddleCollisions()
     
-    -- Check for scoring
-    if self.ballPosition.X <= 0 then
-        -- Right scores in playing mode only
-        if self.gameState.state == GameState.PLAYING then
-            self.gameState.p2Score += 1
-        end
-        -- Just bounce in attract/waiting mode
-        self.ballVelocity = Vector2.new(math.abs(self.ballVelocity.X), self.ballVelocity.Y)
-        self.ballPosition = Vector2.new(0, self.ballPosition.Y)
-    elseif self.ballPosition.X >= 1 then
-        -- Left scores in playing mode only
-        if self.gameState.state == GameState.PLAYING then
-            self.gameState.p1Score += 1
-        end
-        -- Just bounce in attract/waiting mode
-        self.ballVelocity = Vector2.new(-math.abs(self.ballVelocity.X), self.ballVelocity.Y)
-        self.ballPosition = Vector2.new(1, self.ballPosition.Y)
+    -- Check for left/right collisions in attract mode (only if we haven't hit a paddle)
+    if self.ballPosition.X <= 0 or self.ballPosition.X >= 1 then
+        -- Reset ball to center with random angle
+        self.ballPosition = Vector2.new(0.5, 0.5)
+        local angle = math.rad(math.random(-30, 30))
+        local direction = math.random() < 0.5 and -1 or 1
+        self.ballVelocity = Vector2.new(
+            direction * INITIAL_BALL_SPEED * 0.7 * math.cos(angle),
+            INITIAL_BALL_SPEED * 0.7 * math.sin(angle)
+        )
     end
+    
+    -- Update display state
+    self:updateState()
 end
 
 function PongGame:updatePlaying(deltaTime: number)
@@ -363,13 +366,15 @@ function PongGame:updatePlaying(deltaTime: number)
         -- Update ball position
         self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
         
-        -- Check for top/bottom collisions
-        if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
-            self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
-            self.ballPosition = Vector2.new(
-                self.ballPosition.X,
-                self.ballPosition.Y <= 0 and 0 or 1
-            )
+        -- Check for top/bottom collisions with extended bottom boundary
+        if self.ballPosition.Y <= 0 then
+            -- Top collision
+            self.ballVelocity = Vector2.new(self.ballVelocity.X, math.abs(self.ballVelocity.Y))
+            self.ballPosition = Vector2.new(self.ballPosition.X, 0)
+        elseif self.ballPosition.Y >= 1.05 then  -- Extended bottom boundary
+            -- Bottom collision
+            self.ballVelocity = Vector2.new(self.ballVelocity.X, -math.abs(self.ballVelocity.Y))
+            self.ballPosition = Vector2.new(self.ballPosition.X, 1.05)
         end
         
         -- Check for scoring
@@ -487,18 +492,12 @@ function PongGame:resetBall(isAttractMode: boolean?)
     local angle = math.rad(math.random(-45, 45))
     local direction = math.random() < 0.5 and -1 or 1
     self.ballVelocity = Vector2.new(
-        direction * BALL_SPEED * math.cos(angle),
-        BALL_SPEED * math.sin(angle)
+        direction * INITIAL_BALL_SPEED * math.cos(angle),
+        INITIAL_BALL_SPEED * math.sin(angle)
     )
 end
 
 function PongGame:checkPaddleCollisions()
-    -- Constants for paddle and ball dimensions
-    local PADDLE_WIDTH = 0.02
-    local PADDLE_HEIGHT = 0.2
-    local PADDLE_LEFT_X = 0.1
-    local PADDLE_RIGHT_X = 0.9
-    
     -- Left paddle collision check
     if self.ballPosition.X > PADDLE_LEFT_X - PADDLE_WIDTH/2 and 
        self.ballPosition.X < PADDLE_LEFT_X + PADDLE_WIDTH/2 and
@@ -509,12 +508,12 @@ function PongGame:checkPaddleCollisions()
            self.ballPosition.Y <= paddleY + PADDLE_HEIGHT/2 then
             -- Calculate relative intersection with paddle (-1 to 1)
             local relativeIntersectY = (self.ballPosition.Y - paddleY) / (PADDLE_HEIGHT/2)
-            -- Convert to bounce angle (maximum 75 degrees)
-            local bounceAngle = relativeIntersectY * math.rad(75)
+            -- Convert to bounce angle (maximum 60 degrees)
+            local bounceAngle = relativeIntersectY * math.rad(60)
             
             -- Increase speed slightly with each hit
             local currentSpeed = math.sqrt(self.ballVelocity.X^2 + self.ballVelocity.Y^2)
-            local newSpeed = math.min(currentSpeed * 1.1, 1.5)  -- Cap max speed
+            local newSpeed = math.min(currentSpeed + BALL_SPEED_INCREMENT, MAX_BALL_SPEED)
             
             -- Set new velocity
             self.ballVelocity = Vector2.new(
@@ -537,12 +536,12 @@ function PongGame:checkPaddleCollisions()
            self.ballPosition.Y <= paddleY + PADDLE_HEIGHT/2 then
             -- Calculate relative intersection with paddle (-1 to 1)
             local relativeIntersectY = (self.ballPosition.Y - paddleY) / (PADDLE_HEIGHT/2)
-            -- Convert to bounce angle (maximum 75 degrees)
-            local bounceAngle = relativeIntersectY * math.rad(75)
+            -- Convert to bounce angle (maximum 60 degrees)
+            local bounceAngle = relativeIntersectY * math.rad(60)
             
             -- Increase speed slightly with each hit
             local currentSpeed = math.sqrt(self.ballVelocity.X^2 + self.ballVelocity.Y^2)
-            local newSpeed = math.min(currentSpeed * 1.1, 1.5)  -- Cap max speed
+            local newSpeed = math.min(currentSpeed + BALL_SPEED_INCREMENT, MAX_BALL_SPEED)
             
             -- Set new velocity
             self.ballVelocity = Vector2.new(
@@ -557,18 +556,15 @@ function PongGame:checkPaddleCollisions()
 end
 
 function PongGame:checkWinCondition(lastScorer: string)
-    print("Checking win condition:", self.gameState.p1Score, self.gameState.p2Score)  -- Debug print
-    
     if self.gameState.p1Score >= 11 or self.gameState.p2Score >= 11 then
-        print("Score >= 11 detected")  -- Debug print
-        
         -- Check for win by 2
         if math.abs(self.gameState.p1Score - self.gameState.p2Score) >= 2 then
-            print("Win by 2 confirmed")  -- Debug print
-            
             -- Game over!
             self.isCountingDown = true
             self.ballVelocity = Vector2.new(0, 0)
+            
+            -- Exit players from the game
+            self:exitPlayers()
             
             local winner = self.gameState.p1Score > self.gameState.p2Score and "Player 1" or "Player 2"
             self.gameState.message = string.format("%s Wins! Final Score: %d-%d", 
@@ -618,6 +614,8 @@ function PongGame:updateState()
         paddlePosition = self.paddlePosition,
         aiPaddlePosition = self.aiPaddlePosition,
         ballPosition = self.ballPosition,
+        -- Hide ball during countdown or when any message is displayed
+        ballVisible = not self.isCountingDown and self.gameState.message == "",
         gameState = {
             state = self.gameState.state,
             message = self.gameState.message,
@@ -642,9 +640,11 @@ function PongGame:startServeSequence(scoringPlayer: string)
     self.isCountingDown = true
     self.lastScorer = scoringPlayer
     
-    -- Reset positions
-    self.ballPosition = Vector2.new(0.5, 0.5)
+    -- Move ball off screen during countdown
+    self.ballPosition = Vector2.new(-1, -1)
     self.ballVelocity = Vector2.new(0, 0)
+    
+    -- Reset paddle positions
     self.paddlePosition = 0.5
     self.aiPaddlePosition = 0.5
     
@@ -655,7 +655,7 @@ function PongGame:startServeSequence(scoringPlayer: string)
         self.gameState.message = "3"  -- Start countdown immediately for initial serve
     end
     
-    -- Update state immediately
+    -- Update state immediately to hide ball
     self:updateState()
     
     -- Start countdown sequence
@@ -676,11 +676,73 @@ function PongGame:startServeSequence(scoringPlayer: string)
         self:updateState()
         wait(1)
         if self.gameState.state ~= GameState.PLAYING then return end
+        
+        -- Reset ball to center only after countdown completes
+        self.ballPosition = Vector2.new(0.5, 0.5)
         self.gameState.message = ""
         self.isCountingDown = false
         self:resetBall()
         self:updateState()
     end)
+end
+
+function PongGame:exitPlayers()
+    -- Store original states and restore them
+    if self.gameState.player1 then
+        local character = self.gameState.player1.Character
+        if character then
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid then
+                -- Restore movement
+                humanoid.WalkSpeed = 16  -- Default walk speed
+                humanoid.AutoRotate = true
+                humanoid.JumpPower = 50  -- Default jump power
+                
+                -- Unanchor all parts
+                for _, part in character:GetDescendants() do
+                    if part:IsA("BasePart") then
+                        part.Anchored = false
+                    end
+                end
+            end
+        end
+        self:disableIKControl(self.gameState.player1)
+    end
+    
+    if self.gameState.player2 then
+        local character = self.gameState.player2.Character
+        if character then
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid then
+                -- Restore movement
+                humanoid.WalkSpeed = 16  -- Default walk speed
+                humanoid.AutoRotate = true
+                humanoid.JumpPower = 50  -- Default jump power
+                
+                -- Unanchor all parts
+                for _, part in character:GetDescendants() do
+                    if part:IsA("BasePart") then
+                        part.Anchored = false
+                    end
+                end
+            end
+        end
+        self:disableIKControl(self.gameState.player2)
+    end
+end
+
+function PongGame:disableIKControl(player: Player)
+    local character = player.Character
+    if character then
+        local humanoid = character:FindFirstChild("Humanoid")
+        if humanoid then
+            for _, ikControl in pairs(humanoid:GetChildren()) do
+                if ikControl:IsA("IKControl") then
+                    ikControl:Destroy()
+                end
+            end
+        end
+    end
 end
 
 -- Listen for player input
