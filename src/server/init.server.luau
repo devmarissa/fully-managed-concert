@@ -21,6 +21,13 @@ CabinetEvents.PlayCabinet.OnServerEvent:Connect(function(player, promptPart)
     local game = activeGames[cabinet]
     if not game then return end
     
+    -- Check if this player is already playing
+    if game.gameState.player1 == player or game.gameState.player2 == player then
+        -- Player is trying to exit
+        game:playerLeft(player)
+        return
+    end
+    
     -- Determine if this is P1 or P2
     local position = promptPart.Name == "P1" and 1 or 2
     

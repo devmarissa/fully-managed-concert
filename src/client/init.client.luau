@@ -44,17 +44,37 @@ local function setupCabinetInteraction()
 end
 
 -- Listen for game state changes
-CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1Player)
+CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1Player, p2Player)
     if not cabinet then return end
     
+    local p1Prompt = cabinet.P1:FindFirstChild("ProximityPrompt")
     local p2Prompt = cabinet.P2:FindFirstChild("ProximityPrompt")
-    if not p2Prompt then return end
+    if not p1Prompt or not p2Prompt then return end
     
-    if state == "WAITING_FOR_P2" then
-        -- Only show P2 prompt to players who aren't P1
-        p2Prompt.Enabled = p1Player ~= localPlayer
-    else
+    if state == "ATTRACT_MODE" then
+        -- Anyone can join as P1
+        p1Prompt.Enabled = true
+        p1Prompt.ActionText = "Play"
         p2Prompt.Enabled = false
+        
+    elseif state == "WAITING_FOR_P2" then
+        -- P1 can exit, others can join as P2
+        if localPlayer == p1Player then
+            p1Prompt.Enabled = true
+            p1Prompt.ActionText = "Exit"
+            p2Prompt.Enabled = false
+        else
+            p1Prompt.Enabled = false
+            p2Prompt.Enabled = true
+            p2Prompt.ActionText = "Play"
+        end
+        
+    else -- PLAYING
+        -- Each player sees their own exit prompt
+        p1Prompt.Enabled = localPlayer == p1Player
+        p2Prompt.Enabled = localPlayer == p2Player
+        p1Prompt.ActionText = "Exit"
+        p2Prompt.ActionText = "Exit"
     end
 end)
 

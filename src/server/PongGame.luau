@@ -61,20 +61,16 @@ function PongGame.new(cabinet)
     self.gameState = {
         state = GameState.ATTRACT_MODE,
         isActive = false,
-        score = 0,
-        highScore = 0,
-        lastUpdateTime = os.clock(),
+        p1Score = 0,
+        p2Score = 0,
         player1 = nil,
         player2 = nil,
         message = "PRESS START"
     }
     
-    -- Debug info (for logging only)
-    self.debugInfo = {
-        resetCount = 0,
-        lastResetTime = 0,
-        ballPositionHistory = {}
-    }
+    -- Debug info
+    self.lastStateChange = os.clock()
+    self.lastDebugPrint = 0
     
     -- Update prompt visibility
     self:updatePrompts()
@@ -89,18 +85,94 @@ function PongGame:updatePrompts()
     if self.gameState.state == GameState.ATTRACT_MODE then
         -- In attract mode, only P1 prompt is visible
         self.p1Prompt.Enabled = true
+        self.p1Prompt.ActionText = "Play"
         self.p2Prompt.Enabled = false
-        CabinetEvents.GameStateChanged:FireAllClients(self.cabinet, self.gameState.state, nil)
+        
     elseif self.gameState.state == GameState.WAITING_FOR_P2 then
-        -- Waiting for P2, P1 prompt disabled, P2 prompt enabled
-        self.p1Prompt.Enabled = false
+        -- P1 can exit, others can join as P2
+        self.p1Prompt.Enabled = true
+        self.p1Prompt.ActionText = "Exit"
         self.p2Prompt.Enabled = true
-        CabinetEvents.GameStateChanged:FireAllClients(self.cabinet, self.gameState.state, self.gameState.player1)
-    else
-        -- During gameplay, both prompts disabled
-        self.p1Prompt.Enabled = false
-        self.p2Prompt.Enabled = false
-        CabinetEvents.GameStateChanged:FireAllClients(self.cabinet, self.gameState.state, self.gameState.player1)
+        self.p2Prompt.ActionText = "Play"
+        
+    else -- PLAYING
+        -- Both players can exit
+        self.p1Prompt.Enabled = self.gameState.player1 ~= nil
+        self.p2Prompt.Enabled = self.gameState.player2 ~= nil
+        self.p1Prompt.ActionText = "Exit"
+        self.p2Prompt.ActionText = "Exit"
+    end
+    
+    -- Send state update to all clients with both player info
+    CabinetEvents.GameStateChanged:FireAllClients(
+        self.cabinet,
+        self.gameState.state,
+        self.gameState.player1,
+        self.gameState.player2
+    )
+end
+
+function PongGame:startGame(player: Player, position: number)
+    if position == 1 and self.gameState.state == GameState.ATTRACT_MODE then
+        -- Player 1 joining
+        print("[PongGame] Player 1 joined:", player.Name)
+        self.gameState.player1 = player
+        self.gameState.state = GameState.WAITING_FOR_P2
+        self.gameState.message = "WAITING FOR PLAYER 2"
+        self.lastStateChange = os.clock()
+        self:positionPlayer(player, 1)
+        self:updatePrompts()
+        -- Don't reset ball, keep it moving
+        
+    elseif position == 2 and self.gameState.state == GameState.WAITING_FOR_P2 then
+        -- Player 2 joining
+        print("[PongGame] Player 2 joined:", player.Name)
+        self.gameState.player2 = player
+        self.gameState.state = GameState.PLAYING
+        self.gameState.isActive = true
+        self.gameState.p1Score = 0
+        self.gameState.p2Score = 0
+        self.gameState.message = ""
+        self.lastStateChange = os.clock()
+        self:positionPlayer(player, 2)
+        self:updatePrompts()
+        -- Start with a fresh serve
+        self:resetBall()
+    end
+end
+
+function PongGame:playerLeft(player: Player)
+    if player == self.gameState.player1 then
+        print("[PongGame] Player 1 left:", player.Name)
+        self:removePlayer(player)
+        
+        -- If P2 exists, they need to leave too
+        if self.gameState.player2 then
+            self:removePlayer(self.gameState.player2)
+            self.gameState.player2 = nil
+        end
+        
+        -- Reset to attract mode
+        self.gameState.player1 = nil
+        self.gameState.state = GameState.ATTRACT_MODE
+        self.gameState.isActive = false
+        self.gameState.message = "PRESS START"
+        self.lastStateChange = os.clock()
+        self:updatePrompts()
+        -- Keep ball moving, don't reset
+        
+    elseif player == self.gameState.player2 then
+        print("[PongGame] Player 2 left:", player.Name)
+        self:removePlayer(player)
+        self.gameState.player2 = nil
+        
+        -- Return to waiting for P2
+        self.gameState.state = GameState.WAITING_FOR_P2
+        self.gameState.isActive = false
+        self.gameState.message = "WAITING FOR PLAYER 2"
+        self.lastStateChange = os.clock()
+        self:updatePrompts()
+        -- Keep ball moving, don't reset
     end
 end
 
@@ -123,12 +195,11 @@ function PongGame:positionPlayer(player: Player, position: number)
     humanoid.JumpPower = 0
     humanoid.AutoRotate = false
     
-    -- Disable all state changes except for Physics
-    for _, state in pairs(Enum.HumanoidStateType:GetEnumItems()) do
-        if state ~= Enum.HumanoidStateType.Physics then
-            humanoid:SetStateEnabled(state, false)
-        end
-    end
+    -- Disable specific states
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, false)
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
     
     -- Set up IK control
     local endEffector, chainRoot
@@ -176,10 +247,11 @@ function PongGame:removePlayer(player: Player)
             humanoid.JumpPower = 50  -- Default jump power
             humanoid.AutoRotate = true
             
-            -- Re-enable all states
-            for _, state in pairs(Enum.HumanoidStateType:GetEnumItems()) do
-                humanoid:SetStateEnabled(state, true)
-            end
+            -- Re-enable specific states
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
         end
         
         -- Unanchor character
@@ -196,277 +268,147 @@ function PongGame:removePlayer(player: Player)
     end
 end
 
-function PongGame:startGame(player: Player, position: number)
-    if position == 1 and self.gameState.state == GameState.ATTRACT_MODE then
-        -- Player 1 joining
-        print("[PongGame] Player 1 joined:", player.Name)
-        self.gameState.player1 = player
-        self.gameState.state = GameState.WAITING_FOR_P2
-        self.gameState.message = "WAITING FOR PLAYER 2"
-        self:positionPlayer(player, 1)
-        self:updatePrompts()
-    elseif position == 2 and self.gameState.state == GameState.WAITING_FOR_P2 then
-        -- Player 2 joining, start the game
-        print("[PongGame] Player 2 joined:", player.Name)
-        self.gameState.player2 = player
-        self.gameState.state = GameState.PLAYING
-        self.gameState.isActive = true
-        self.gameState.score = 0
-        self.gameState.message = ""
-        self:positionPlayer(player, 2)
-        self:updatePrompts()
-        self:resetBall()
+function PongGame:update(deltaTime: number)
+    -- Print debug info every second
+    if os.clock() - self.lastDebugPrint > 1 then
+        self.lastDebugPrint = os.clock()
+        local timeInState = math.floor(os.clock() - self.lastStateChange)
+        local p1Name = self.gameState.player1 and self.gameState.player1.Name or "None"
+        local p2Name = self.gameState.player2 and self.gameState.player2.Name or "None"
+        print(string.format("[PongGame] State: %s (for %ds) | P1: %s (%d) | P2: %s (%d)", 
+            self.gameState.state,
+            timeInState,
+            p1Name,
+            self.gameState.p1Score,
+            p2Name,
+            self.gameState.p2Score
+        ))
     end
-end
-
-function PongGame:playerLeft(player: Player)
-    if player == self.gameState.player1 or player == self.gameState.player2 then
-        print("[PongGame] Player left:", player.Name)
-        -- Remove IK control and unanchor player
-        self:removePlayer(player)
-        -- Reset to attract mode
-        self.gameState.state = GameState.ATTRACT_MODE
-        self.gameState.isActive = false
-        self.gameState.player1 = nil
-        self.gameState.player2 = nil
-        self.gameState.score = 0
-        self.gameState.message = "PRESS START"
-        self:updatePrompts()
-        self:resetBall(true)
+    
+    if self.gameState.state == GameState.ATTRACT_MODE then
+        self:updateAttractMode(deltaTime)
+    elseif self.gameState.state == GameState.WAITING_FOR_P2 then
+        self:updateAttractMode(deltaTime)
+    else -- PLAYING
+        self:updatePlaying(deltaTime)
     end
-end
-
-function PongGame:getState()
-    return self.gameState
 end
 
 function PongGame:updateAttractMode(deltaTime: number)
-    -- Store previous position for debugging
-    table.insert(self.debugInfo.ballPositionHistory, {
-        position = self.ballPosition,
-        velocity = self.ballVelocity,
-        time = os.clock()
-    })
-    if #self.debugInfo.ballPositionHistory > 10 then
-        table.remove(self.debugInfo.ballPositionHistory, 1)
-    end
-    
     -- Update ball position
-    local newPosition = Vector2.new(
-        self.ballPosition.X + (self.ballVelocity.X * deltaTime),
-        self.ballPosition.Y + (self.ballVelocity.Y * deltaTime)
-    )
+    self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
     
-    -- Ball hits top or bottom
-    if newPosition.Y <= 0 or newPosition.Y >= 1 then
+    -- Check for top/bottom collisions
+    if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
         self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
-        newPosition = Vector2.new(newPosition.X, math.clamp(newPosition.Y, 0, 1))
-    end
-    
-    -- Ball hits paddles
-    if newPosition.X <= PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2 then -- Left paddle
-        if math.abs(newPosition.Y - self.paddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (newPosition.Y - self.paddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
-            self.ballVelocity = Vector2.new(
-                BALL_SPEED,
-                hitOffset * BALL_SPEED
-            )
-            newPosition = Vector2.new(PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2, newPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed left paddle")
-            self:resetBall(true)
-            return
-        end
-    elseif newPosition.X >= (1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2) then -- Right paddle
-        if math.abs(newPosition.Y - self.aiPaddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (newPosition.Y - self.aiPaddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
-            self.ballVelocity = Vector2.new(
-                -BALL_SPEED,
-                hitOffset * BALL_SPEED
-            )
-            newPosition = Vector2.new(1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2, newPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed right paddle")
-            self:resetBall(true)
-            return
-        end
-    end
-    
-    -- Ensure ball stays within bounds
-    newPosition = Vector2.new(
-        math.clamp(newPosition.X, 0, 1),
-        math.clamp(newPosition.Y, 0, 1)
-    )
-
-    -- Reset ball if it goes past paddles
-    if newPosition.X <= 0 or newPosition.X >= 1 then
-        print("[PongGame] Ball out of bounds, resetting")
-        self:resetBall(true)
-        return
-    end
-
-    -- Update ball position
-    self.ballPosition = newPosition
-    
-    -- Move AI paddle towards ball
-    local targetY = newPosition.Y
-    local aiDelta = targetY - self.aiPaddlePosition
-    
-    if math.abs(aiDelta) > 0.01 then -- Add some deadzone
-        self.aiPaddlePosition = math.clamp(
-            self.aiPaddlePosition + math.sign(aiDelta) * PADDLE_SPEED * deltaTime,
-            MIN_PADDLE_Y,
-            MAX_PADDLE_Y
+        self.ballPosition = Vector2.new(
+            self.ballPosition.X,
+            math.clamp(self.ballPosition.Y, 0, 1)
         )
     end
     
-    -- Update paddles to follow ball
-    local function updatePaddle(currentPos: number, targetY: number): number
-        local diff = targetY - currentPos
-        if math.abs(diff) > 0.01 then
-            return math.clamp(
-                currentPos + (math.sign(diff) * PADDLE_SPEED * deltaTime),
-                MIN_PADDLE_Y,
-                MAX_PADDLE_Y
-            )
+    -- Update AI paddle positions
+    self:updateAI(deltaTime)
+    self:updateAI2(deltaTime)
+    
+    -- Check for paddle collisions
+    self:checkPaddleCollisions()
+    
+    -- Check for scoring
+    if self.ballPosition.X <= 0 then
+        -- Right scores in playing mode only
+        if self.gameState.state == GameState.PLAYING then
+            self.gameState.p2Score += 1
         end
-        return currentPos
-    end
-    
-    -- Left paddle
-    self.paddlePosition = updatePaddle(self.paddlePosition, self.ballPosition.Y)
-    
-    -- Right paddle
-    self.aiPaddlePosition = updatePaddle(self.aiPaddlePosition, self.ballPosition.Y)
-    
-    -- Print debug info every second
-    if os.clock() - (self.lastDebugPrint or 0) > 1 then
-        self.lastDebugPrint = os.clock()
-        print(string.format("[PongGame] Ball: pos=(%.2f, %.2f) vel=(%.2f, %.2f)", 
-            self.ballPosition.X, self.ballPosition.Y,
-            self.ballVelocity.X, self.ballVelocity.Y
-        ))
+        -- Just bounce in attract/waiting mode
+        self.ballVelocity = Vector2.new(math.abs(self.ballVelocity.X), self.ballVelocity.Y)
+        self.ballPosition = Vector2.new(0, self.ballPosition.Y)
+    elseif self.ballPosition.X >= 1 then
+        -- Left scores in playing mode only
+        if self.gameState.state == GameState.PLAYING then
+            self.gameState.p1Score += 1
+        end
+        -- Just bounce in attract/waiting mode
+        self.ballVelocity = Vector2.new(-math.abs(self.ballVelocity.X), self.ballVelocity.Y)
+        self.ballPosition = Vector2.new(1, self.ballPosition.Y)
     end
 end
 
-function PongGame:update(deltaTime: number)
-    if not self.gameState.isActive then
-        -- Run attract mode when no one is playing
-        self:updateAttractMode(deltaTime)
-        return
-    end
+function PongGame:updatePlaying(deltaTime: number)
+    -- Similar to attract mode but with player control
+    self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
     
-    -- Store previous position for debugging
-    table.insert(self.debugInfo.ballPositionHistory, {
-        position = self.ballPosition,
-        velocity = self.ballVelocity,
-        time = os.clock()
-    })
-    if #self.debugInfo.ballPositionHistory > 10 then
-        table.remove(self.debugInfo.ballPositionHistory, 1)
-    end
-    
-    -- Update ball position
-    local newPosition = Vector2.new(
-        self.ballPosition.X + (self.ballVelocity.X * deltaTime),
-        self.ballPosition.Y + (self.ballVelocity.Y * deltaTime)
-    )
-    
-    -- Ball hits top or bottom
-    if newPosition.Y <= 0 or newPosition.Y >= 1 then
+    -- Check for top/bottom collisions
+    if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
         self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
-        newPosition = Vector2.new(newPosition.X, math.clamp(newPosition.Y, 0, 1))
-    end
-    
-    -- Ball hits paddles
-    if newPosition.X <= PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2 then -- Left paddle
-        if math.abs(newPosition.Y - self.paddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            print(string.format("[PongGame] Ball hit left paddle at Y=%.2f", self.paddlePosition))
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (newPosition.Y - self.paddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
-            self.ballVelocity = Vector2.new(
-                BALL_SPEED,
-                hitOffset * BALL_SPEED
-            )
-            newPosition = Vector2.new(PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2, newPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed left paddle")
-            self:resetBall()
-            return
-        end
-    elseif newPosition.X >= (1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2) then -- Right paddle
-        if math.abs(newPosition.Y - self.aiPaddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            print(string.format("[PongGame] Ball hit right paddle at Y=%.2f", self.aiPaddlePosition))
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (newPosition.Y - self.aiPaddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
-            self.ballVelocity = Vector2.new(
-                -BALL_SPEED,
-                hitOffset * BALL_SPEED
-            )
-            newPosition = Vector2.new(1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2, newPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed right paddle")
-            self:resetBall()
-            return
-        end
-    end
-    
-    -- Ensure ball stays within bounds
-    newPosition = Vector2.new(
-        math.clamp(newPosition.X, 0, 1),
-        math.clamp(newPosition.Y, 0, 1)
-    )
-
-    -- Reset ball if it goes past paddles
-    if newPosition.X <= 0 or newPosition.X >= 1 then
-        print("[PongGame] Ball out of bounds, resetting")
-        self:resetBall()
-        return
-    end
-
-    -- Update ball position
-    self.ballPosition = newPosition
-    
-    -- Update AI paddle (simple follow behavior)
-    local targetY = self.ballPosition.Y
-    local aiDelta = targetY - self.aiPaddlePosition
-    
-    if math.abs(aiDelta) > 0.01 then -- Add some deadzone
-        self.aiPaddlePosition = math.clamp(
-            self.aiPaddlePosition + math.sign(aiDelta) * PADDLE_SPEED * deltaTime,
-            MIN_PADDLE_Y,
-            MAX_PADDLE_Y
+        self.ballPosition = Vector2.new(
+            self.ballPosition.X,
+            math.clamp(self.ballPosition.Y, 0, 1)
         )
     end
     
-    -- Print debug info every second
-    if os.clock() - (self.lastDebugPrint or 0) > 1 then
-        self.lastDebugPrint = os.clock()
-        print(string.format("[PongGame] Ball: pos=(%.2f, %.2f) vel=(%.2f, %.2f)", 
-            self.ballPosition.X, self.ballPosition.Y,
-            self.ballVelocity.X, self.ballVelocity.Y
-        ))
+    -- Update player paddle positions (will implement later)
+    -- For now, use AI
+    self:updateAI(deltaTime)
+    self:updateAI2(deltaTime)
+    
+    -- Check for paddle collisions
+    self:checkPaddleCollisions()
+    
+    -- Check for scoring
+    if self.ballPosition.X <= 0 then
+        -- Right scores
+        if self.gameState.state == GameState.PLAYING then
+            self.gameState.p2Score += 1
+        end
+        self:resetBall(false)
+    elseif self.ballPosition.X >= 1 then
+        -- Left scores
+        if self.gameState.state == GameState.PLAYING then
+            self.gameState.p1Score += 1
+        end
+        self:resetBall(false)
     end
 end
 
 function PongGame:updateAI(deltaTime: number)
     -- Simple AI: Follow the ball with some delay
     local targetY = self.ballPosition.Y
-    local diff = targetY - self.aiPaddlePosition
+    local currentY = self.paddlePosition
+    local diff = targetY - currentY
     
-    -- Add some intentional "sloppiness" to make it beatable
-    if math.abs(diff) > 0.1 then
-        self.aiPaddlePosition = self.aiPaddlePosition + (math.sign(diff) * PADDLE_SPEED * deltaTime)
+    -- Add some randomness and delay to make it beatable
+    local maxSpeed = PADDLE_SPEED * 0.8
+    local deadzone = 0.02
+    
+    if math.abs(diff) > deadzone then
+        local direction = diff > 0 and 1 or -1
+        self.paddlePosition = math.clamp(
+            currentY + direction * maxSpeed * deltaTime,
+            MIN_PADDLE_Y,
+            MAX_PADDLE_Y
+        )
     end
+end
+
+function PongGame:updateAI2(deltaTime: number)
+    -- Second AI paddle (right side)
+    local targetY = self.ballPosition.Y
+    local currentY = self.aiPaddlePosition
+    local diff = targetY - currentY
     
-    -- Clamp paddle position
-    self.aiPaddlePosition = math.clamp(self.aiPaddlePosition, MIN_PADDLE_Y, MAX_PADDLE_Y)
+    -- Add some randomness and delay to make it beatable
+    local maxSpeed = PADDLE_SPEED * 0.8
+    local deadzone = 0.02
+    
+    if math.abs(diff) > deadzone then
+        local direction = diff > 0 and 1 or -1
+        self.aiPaddlePosition = math.clamp(
+            currentY + direction * maxSpeed * deltaTime,
+            MIN_PADDLE_Y,
+            MAX_PADDLE_Y
+        )
+    end
 end
 
 function PongGame:handleInput(inputType: string, inputState: boolean)
@@ -511,12 +453,6 @@ function PongGame:getState(): PongState
 end
 
 function PongGame:resetBall(isAttractMode: boolean?)
-    if self.debugInfo then
-        self.debugInfo.resetCount += 1
-        self.debugInfo.lastResetTime = os.clock()
-        print(string.format("[PongGame] Ball reset #%d at time %.2f", self.debugInfo.resetCount, self.debugInfo.lastResetTime))
-    end
-    
     -- Reset ball to center with random Y velocity
     self.ballPosition = Vector2.new(0.5, 0.5)
     local speed = BALL_SPEED
@@ -533,9 +469,43 @@ function PongGame:resetBall(isAttractMode: boolean?)
             math.sin(angle) * speed
         )
     end
+end
+
+function PongGame:checkPaddleCollisions()
+    -- Check for left paddle collision
+    if self.ballPosition.X <= PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2 then
+        if math.abs(self.ballPosition.Y - self.paddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
+            -- Reverse X direction and add some Y based on where it hit the paddle
+            local hitOffset = (self.ballPosition.Y - self.paddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
+            self.ballVelocity = Vector2.new(
+                BALL_SPEED,
+                hitOffset * BALL_SPEED
+            )
+            self.ballPosition = Vector2.new(PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2, self.ballPosition.Y)
+        else
+            -- Miss! Reset ball
+            print("[PongGame] Ball missed left paddle")
+            self:resetBall()
+            return
+        end
+    end
     
-    if self.debugInfo then
-        print(string.format("[PongGame] New ball velocity: (%.2f, %.2f)", self.ballVelocity.X, self.ballVelocity.Y))
+    -- Check for right paddle collision
+    if self.ballPosition.X >= (1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2) then
+        if math.abs(self.ballPosition.Y - self.aiPaddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
+            -- Reverse X direction and add some Y based on where it hit the paddle
+            local hitOffset = (self.ballPosition.Y - self.aiPaddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
+            self.ballVelocity = Vector2.new(
+                -BALL_SPEED,
+                hitOffset * BALL_SPEED
+            )
+            self.ballPosition = Vector2.new(1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2, self.ballPosition.Y)
+        else
+            -- Miss! Reset ball
+            print("[PongGame] Ball missed right paddle")
+            self:resetBall()
+            return
+        end
     end
 end
 

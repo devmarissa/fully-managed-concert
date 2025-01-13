@@ -82,12 +82,13 @@ function PongDisplay:render()
         Score = Roact.createElement("TextLabel", {
             Size = UDim2.new(0, 200, 0, 50),
             Position = UDim2.new(0.5, -100, 0, SCREEN_PADDING),
-            Text = tostring(gameState.gameState.score),
+            Text = string.format("%d  %d", gameState.gameState.p1Score or 0, gameState.gameState.p2Score or 0),
             TextColor3 = Color3.fromRGB(255, 255, 255),
             TextSize = SCORE_TEXT_SIZE,
             Font = Enum.Font.Arcade,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
+            TextXAlignment = Enum.TextXAlignment.Center,
         }),
 
         -- Game State Message
