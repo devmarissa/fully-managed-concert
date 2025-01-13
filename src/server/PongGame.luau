@@ -36,6 +36,9 @@ local GameState = {
     PLAYING = "PLAYING"
 }
 
+-- Initialize active games table at the top level
+local activeGames = {}
+
 local PongGame = {}
 PongGame.__index = PongGame
 
@@ -51,22 +54,30 @@ function PongGame.new(cabinet)
     self.leftPaddle = controls:WaitForChild("leftPaddle")
     self.rightPaddle = controls:WaitForChild("rightPaddle")
     
-    -- Initialize positions
-    self.paddlePosition = 0.5
-    self.aiPaddlePosition = 0.5
-    self.ballPosition = Vector2.new(0.5, 0.5)
-    self.ballVelocity = Vector2.new(BALL_SPEED, 0)
-    
     -- Initialize game state
     self.gameState = {
         state = GameState.ATTRACT_MODE,
         isActive = false,
-        p1Score = 0,
-        p2Score = 0,
         player1 = nil,
         player2 = nil,
-        message = "PRESS START"
+        message = "PRESS START",
+        p1Score = 0,
+        p2Score = 0,
+        lastUpdateTime = os.clock()
     }
+    
+    -- Initialize paddle positions
+    self.paddlePosition = 0.5  -- P1 paddle
+    self.aiPaddlePosition = 0.5  -- P2 paddle
+    
+    -- Initialize ball
+    self.ballPosition = Vector2.new(0.5, 0.5)
+    self.ballVelocity = Vector2.new(0, 0)  -- Start with no velocity
+    self.isCountingDown = false
+    
+    -- Initialize player movement variables
+    self.p1Movement = nil
+    self.p2Movement = nil
     
     -- Debug info
     self.lastStateChange = os.clock()
@@ -122,7 +133,6 @@ function PongGame:startGame(player: Player, position: number)
         self.lastStateChange = os.clock()
         self:positionPlayer(player, 1)
         self:updatePrompts()
-        -- Don't reset ball, keep it moving
         
     elseif position == 2 and self.gameState.state == GameState.WAITING_FOR_P2 then
         -- Player 2 joining
@@ -132,13 +142,23 @@ function PongGame:startGame(player: Player, position: number)
         self.gameState.isActive = true
         self.gameState.p1Score = 0
         self.gameState.p2Score = 0
-        self.gameState.message = ""
+        
+        -- Reset positions
+        self.ballPosition = Vector2.new(0.5, 0.5)
+        self.ballVelocity = Vector2.new(0, 0)
+        self.paddlePosition = 0.5
+        self.aiPaddlePosition = 0.5
+        
         self.lastStateChange = os.clock()
         self:positionPlayer(player, 2)
         self:updatePrompts()
-        -- Start with a fresh serve
-        self:resetBall()
+        
+        -- Start initial serve sequence
+        self:startServeSequence("")  -- Empty string for initial serve
     end
+    
+    -- Store the game instance
+    activeGames[self] = true
 end
 
 function PongGame:playerLeft(player: Player)
@@ -303,7 +323,7 @@ function PongGame:updateAttractMode(deltaTime: number)
         self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
         self.ballPosition = Vector2.new(
             self.ballPosition.X,
-            math.clamp(self.ballPosition.Y, 0, 1)
+            self.ballPosition.Y <= 0 and 0 or 1
         )
     end
     
@@ -335,40 +355,118 @@ function PongGame:updateAttractMode(deltaTime: number)
 end
 
 function PongGame:updatePlaying(deltaTime: number)
-    -- Similar to attract mode but with player control
-    self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
+    -- Don't update ball position during countdown
+    if not self.isCountingDown then
+        -- Handle player inputs
+        self:handlePlayerInput(deltaTime)
+        
+        -- Update ball position
+        self.ballPosition = self.ballPosition + self.ballVelocity * deltaTime
+        
+        -- Check for top/bottom collisions
+        if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
+            self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
+            self.ballPosition = Vector2.new(
+                self.ballPosition.X,
+                self.ballPosition.Y <= 0 and 0 or 1
+            )
+        end
+        
+        -- Check for paddle collisions
+        self:checkPaddleCollisions()
+        
+        -- Check for scoring
+        if self.ballPosition.X <= 0 then
+            -- Right scores
+            self.gameState.p2Score += 1
+            self.gameState.message = string.format("Player 2 Scores! %d  %d", self.gameState.p1Score, self.gameState.p2Score)
+            self.isCountingDown = true
+            
+            -- Reset ball to center and stop movement
+            self.ballPosition = Vector2.new(0.5, 0.5)
+            self.ballVelocity = Vector2.new(0, 0)
+            
+            -- Start countdown after delay
+            task.spawn(function()
+                wait(2) -- Show score message for 2 seconds
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "3"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "2"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "1"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = ""
+                self.isCountingDown = false
+                self:resetBall()
+            end)
+        elseif self.ballPosition.X >= 1 then
+            -- Left scores
+            self.gameState.p1Score += 1
+            self.gameState.message = string.format("Player 1 Scores! %d  %d", self.gameState.p1Score, self.gameState.p2Score)
+            self.isCountingDown = true
+            
+            -- Reset ball to center and stop movement
+            self.ballPosition = Vector2.new(0.5, 0.5)
+            self.ballVelocity = Vector2.new(0, 0)
+            
+            -- Start countdown after delay
+            task.spawn(function()
+                wait(2) -- Show score message for 2 seconds
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "3"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "2"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = "1"
+                wait(1)
+                if self.gameState.state ~= GameState.PLAYING then return end
+                self.gameState.message = ""
+                self.isCountingDown = false
+                self:resetBall()
+            end)
+        end
+    else
+        -- During countdown, still handle paddle movement
+        self:handlePlayerInput(deltaTime)
+    end
     
-    -- Check for top/bottom collisions
-    if self.ballPosition.Y <= 0 or self.ballPosition.Y >= 1 then
-        self.ballVelocity = Vector2.new(self.ballVelocity.X, -self.ballVelocity.Y)
-        self.ballPosition = Vector2.new(
-            self.ballPosition.X,
-            math.clamp(self.ballPosition.Y, 0, 1)
+    -- Update state for display
+    self:updateState()
+end
+
+function PongGame:handlePlayerInput(deltaTime: number)
+    -- Get current paddle positions
+    local p1Y = self.paddlePosition
+    local p2Y = self.aiPaddlePosition
+    
+    -- Apply any active movement
+    if self.p1Movement then
+        local direction = self.p1Movement == "up" and -1 or 1
+        p1Y = math.clamp(
+            p1Y + direction * PADDLE_SPEED * deltaTime,
+            MIN_PADDLE_Y,
+            MAX_PADDLE_Y
         )
     end
     
-    -- Update player paddle positions (will implement later)
-    -- For now, use AI
-    self:updateAI(deltaTime)
-    self:updateAI2(deltaTime)
-    
-    -- Check for paddle collisions
-    self:checkPaddleCollisions()
-    
-    -- Check for scoring
-    if self.ballPosition.X <= 0 then
-        -- Right scores
-        if self.gameState.state == GameState.PLAYING then
-            self.gameState.p2Score += 1
-        end
-        self:resetBall(false)
-    elseif self.ballPosition.X >= 1 then
-        -- Left scores
-        if self.gameState.state == GameState.PLAYING then
-            self.gameState.p1Score += 1
-        end
-        self:resetBall(false)
+    if self.p2Movement then
+        local direction = self.p2Movement == "up" and -1 or 1
+        p2Y = math.clamp(
+            p2Y + direction * PADDLE_SPEED * deltaTime,
+            MIN_PADDLE_Y,
+            MAX_PADDLE_Y
+        )
     end
+    
+    -- Update positions
+    self.paddlePosition = p1Y
+    self.aiPaddlePosition = p2Y
 end
 
 function PongGame:updateAI(deltaTime: number)
@@ -411,31 +509,6 @@ function PongGame:updateAI2(deltaTime: number)
     end
 end
 
-function PongGame:handleInput(inputType: string, inputState: boolean)
-    if not self.gameState.isActive then return end
-    
-    local deltaTime = os.clock() - self.gameState.lastUpdateTime
-    
-    -- Move paddle based on input
-    if inputType == "Up" then
-        if inputState then
-            self.paddlePosition = math.clamp(
-                self.paddlePosition - (PADDLE_SPEED * deltaTime),
-                MIN_PADDLE_Y,
-                MAX_PADDLE_Y
-            )
-        end
-    elseif inputType == "Down" then
-        if inputState then
-            self.paddlePosition = math.clamp(
-                self.paddlePosition + (PADDLE_SPEED * deltaTime),
-                MIN_PADDLE_Y,
-                MAX_PADDLE_Y
-            )
-        end
-    end
-end
-
 function PongGame:getState(): PongState
     return {
         paddlePosition = self.paddlePosition,
@@ -453,60 +526,222 @@ function PongGame:getState(): PongState
 end
 
 function PongGame:resetBall(isAttractMode: boolean?)
-    -- Reset ball to center with random Y velocity
+    -- Reset ball to center
     self.ballPosition = Vector2.new(0.5, 0.5)
-    local speed = BALL_SPEED
-    local randomY = (math.random() - 0.5) * speed -- Random Y between -speed/2 and speed/2
     
-    -- In attract mode, ball moves slower and more predictably
-    if isAttractMode then
-        self.ballVelocity = Vector2.new(speed * 0.8, randomY * 0.5)
-    else
-        -- During gameplay, add some randomness to the X direction too
-        local angle = math.rad(math.random(-30, 30))
-        self.ballVelocity = Vector2.new(
-            math.cos(angle) * speed,
-            math.sin(angle) * speed
-        )
-    end
+    -- Set initial velocity
+    local angle = math.rad(math.random(-45, 45))
+    local direction = math.random() < 0.5 and -1 or 1
+    self.ballVelocity = Vector2.new(
+        direction * BALL_SPEED * math.cos(angle),
+        BALL_SPEED * math.sin(angle)
+    )
 end
 
 function PongGame:checkPaddleCollisions()
-    -- Check for left paddle collision
-    if self.ballPosition.X <= PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2 then
-        if math.abs(self.ballPosition.Y - self.paddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (self.ballPosition.Y - self.paddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
+    -- Game constants
+    local PADDLE_X_OFFSET = 0.1  -- 10% from edge
+    local PADDLE_HEIGHT = 0.2
+    local PADDLE_WIDTH = 0.02
+    local BALL_SIZE = 0.02
+    local INITIAL_BALL_SPEED = 0.5
+    local MAX_BALL_SPEED = 1.0
+    local BALL_SPEED_INCREMENT = 0.05
+    local WIN_SCORE = 11
+    local MIN_BOUNCE_ANGLE = math.rad(20)  -- Minimum angle off paddle
+    local MAX_BOUNCE_ANGLE = math.rad(60)  -- Maximum angle off paddle
+
+    -- Check left paddle collision
+    if self.ballPosition.X <= PADDLE_X_OFFSET + PADDLE_WIDTH and
+       self.ballPosition.X >= PADDLE_X_OFFSET - BALL_SIZE/2 then
+        local paddleY = self.paddlePosition
+        if self.ballPosition.Y >= paddleY - PADDLE_HEIGHT/2 and
+           self.ballPosition.Y <= paddleY + PADDLE_HEIGHT/2 then
+            -- Calculate relative intersection with paddle
+            local relativeIntersectY = (paddleY - self.ballPosition.Y) / (PADDLE_HEIGHT/2)
+            -- Calculate bounce angle (-45 to 45 degrees)
+            local bounceAngle = relativeIntersectY * MAX_BOUNCE_ANGLE
+            -- Clamp bounce angle to minimum
+            bounceAngle = math.clamp(bounceAngle, -MAX_BOUNCE_ANGLE, MAX_BOUNCE_ANGLE)
+            -- Calculate new velocity
+            local speed = math.min(math.abs(self.ballVelocity.X) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED)
             self.ballVelocity = Vector2.new(
-                BALL_SPEED,
-                hitOffset * BALL_SPEED
+                speed * math.cos(bounceAngle),
+                -speed * math.sin(bounceAngle)
             )
-            self.ballPosition = Vector2.new(PADDLE_X_OFFSET + RELATIVE_BALL_SIZE/2, self.ballPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed left paddle")
-            self:resetBall()
-            return
+            -- Move ball to paddle edge
+            self.ballPosition = Vector2.new(PADDLE_X_OFFSET + PADDLE_WIDTH, self.ballPosition.Y)
+        elseif self.ballPosition.X < PADDLE_X_OFFSET - BALL_SIZE/2 then
+            -- Missed left paddle
+            print("Ball missed left paddle")
+            self.gameState.p2Score += 1
+            self:checkWinCondition("Player 2")
         end
     end
     
-    -- Check for right paddle collision
-    if self.ballPosition.X >= (1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2) then
-        if math.abs(self.ballPosition.Y - self.aiPaddlePosition) < RELATIVE_PADDLE_HEIGHT/2 then
-            -- Reverse X direction and add some Y based on where it hit the paddle
-            local hitOffset = (self.ballPosition.Y - self.aiPaddlePosition) / (RELATIVE_PADDLE_HEIGHT/2)
+    -- Check right paddle collision
+    if self.ballPosition.X >= 1 - PADDLE_X_OFFSET - PADDLE_WIDTH and
+       self.ballPosition.X <= 1 - PADDLE_X_OFFSET + BALL_SIZE/2 then
+        local paddleY = self.aiPaddlePosition
+        if self.ballPosition.Y >= paddleY - PADDLE_HEIGHT/2 and
+           self.ballPosition.Y <= paddleY + PADDLE_HEIGHT/2 then
+            -- Calculate relative intersection with paddle
+            local relativeIntersectY = (paddleY - self.ballPosition.Y) / (PADDLE_HEIGHT/2)
+            -- Calculate bounce angle (-45 to 45 degrees)
+            local bounceAngle = relativeIntersectY * MAX_BOUNCE_ANGLE
+            -- Clamp bounce angle to minimum
+            bounceAngle = math.clamp(bounceAngle, -MAX_BOUNCE_ANGLE, MAX_BOUNCE_ANGLE)
+            -- Calculate new velocity
+            local speed = math.min(math.abs(self.ballVelocity.X) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED)
             self.ballVelocity = Vector2.new(
-                -BALL_SPEED,
-                hitOffset * BALL_SPEED
+                -speed * math.cos(bounceAngle),
+                -speed * math.sin(bounceAngle)
             )
-            self.ballPosition = Vector2.new(1 - PADDLE_X_OFFSET - RELATIVE_BALL_SIZE/2, self.ballPosition.Y)
-        else
-            -- Miss! Reset ball
-            print("[PongGame] Ball missed right paddle")
-            self:resetBall()
-            return
+            -- Move ball to paddle edge
+            self.ballPosition = Vector2.new(1 - PADDLE_X_OFFSET - PADDLE_WIDTH, self.ballPosition.Y)
+        elseif self.ballPosition.X > 1 - PADDLE_X_OFFSET + BALL_SIZE/2 then
+            -- Missed right paddle
+            print("Ball missed right paddle")
+            self.gameState.p1Score += 1
+            self:checkWinCondition("Player 1")
         end
     end
 end
+
+function PongGame:checkWinCondition(lastScorer: string)
+    if self.gameState.p1Score >= 11 or self.gameState.p2Score >= 11 then
+        -- Check for win by 2
+        if math.abs(self.gameState.p1Score - self.gameState.p2Score) >= 2 then
+            -- Game over!
+            self.isCountingDown = true  -- Stop ball movement
+            self.ballVelocity = Vector2.new(0, 0)
+            
+            local winner = self.gameState.p1Score > self.gameState.p2Score and "Player 1" or "Player 2"
+            self.gameState.message = string.format("%s Wins! Final Score: %d-%d", 
+                winner, self.gameState.p1Score, self.gameState.p2Score)
+            
+            -- Make sure display state is updated
+            self:updateState()
+            
+            -- Reset game after delay
+            task.spawn(function()
+                wait(5)  -- Show final score for 5 seconds
+                
+                -- Reset game state
+                self.gameState.state = GameState.ATTRACT_MODE
+                self.gameState.message = "PRESS START"
+                self.gameState.p1Score = 0
+                self.gameState.p2Score = 0
+                self.gameState.isActive = false
+                self.gameState.player1 = nil
+                self.gameState.player2 = nil
+                
+                -- Reset ball and paddles
+                self.paddlePosition = 0.5
+                self.aiPaddlePosition = 0.5
+                self.ballPosition = Vector2.new(0.5, 0.5)
+                self.ballVelocity = Vector2.new(0, 0)
+                
+                -- Update display and prompts
+                self:updateState()
+                self:updatePrompts()
+                
+                -- Start attract mode
+                self:resetBall(true)
+            end)
+        else
+            -- Continue game - regular scoring sequence
+            self:startServeSequence(lastScorer)
+        end
+    else
+        -- Regular point scored
+        self:startServeSequence(lastScorer)
+    end
+end
+
+function PongGame:updateState()
+    -- Update the display state
+    self.displayState = {
+        paddlePosition = self.paddlePosition,
+        aiPaddlePosition = self.aiPaddlePosition,
+        ballPosition = self.ballPosition,
+        gameState = {
+            state = self.gameState.state,
+            message = self.gameState.message,
+            p1Score = self.gameState.p1Score,
+            p2Score = self.gameState.p2Score,
+            isActive = self.gameState.isActive,
+            player1 = self.gameState.player1,
+            player2 = self.gameState.player2
+        }
+    }
+    
+    -- Notify all clients of the state change
+    for _, player in game.Players:GetPlayers() do
+        if player == self.gameState.player1 or player == self.gameState.player2 then
+            CabinetEvents.GameStateChanged:FireClient(player, self.cabinet, self.gameState.state, 
+                self.gameState.player1, self.gameState.player2, self.displayState)
+        end
+    end
+end
+
+function PongGame:startServeSequence(scoringPlayer: string)
+    self.isCountingDown = true
+    self.lastScorer = scoringPlayer
+    
+    -- Reset positions
+    self.ballPosition = Vector2.new(0.5, 0.5)
+    self.ballVelocity = Vector2.new(0, 0)
+    self.paddlePosition = 0.5
+    self.aiPaddlePosition = 0.5
+    
+    -- Show score message
+    if scoringPlayer ~= "" then  -- Don't show for initial serve
+        self.gameState.message = string.format("%s Scores! %d-%d", scoringPlayer, self.gameState.p1Score, self.gameState.p2Score)
+    else
+        self.gameState.message = "3"  -- Start countdown immediately for initial serve
+    end
+    
+    -- Update state immediately
+    self:updateState()
+    
+    -- Start countdown sequence
+    task.spawn(function()
+        if scoringPlayer ~= "" then  -- Skip initial delay for first serve
+            wait(2) -- Show score message
+        end
+        if self.gameState.state ~= GameState.PLAYING then return end
+        self.gameState.message = "3"
+        self:updateState()
+        wait(1)
+        if self.gameState.state ~= GameState.PLAYING then return end
+        self.gameState.message = "2"
+        self:updateState()
+        wait(1)
+        if self.gameState.state ~= GameState.PLAYING then return end
+        self.gameState.message = "1"
+        self:updateState()
+        wait(1)
+        if self.gameState.state ~= GameState.PLAYING then return end
+        self.gameState.message = ""
+        self.isCountingDown = false
+        self:resetBall()
+        self:updateState()
+    end)
+end
+
+-- Listen for player input
+CabinetEvents.PlayerInput.OnServerEvent:Connect(function(player, cabinet, direction, isActive)
+    -- Find the game instance for this cabinet
+    for game in pairs(activeGames) do
+        if game.gameState.player1 == player then
+            game.p1Movement = isActive and direction or nil
+            return
+        elseif game.gameState.player2 == player then
+            game.p2Movement = isActive and direction or nil
+            return
+        end
+    end
+end)
 
 return PongGame
