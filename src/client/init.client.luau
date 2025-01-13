@@ -5,47 +5,15 @@ local localPlayer = Players.LocalPlayer
 
 -- Get the RemoteEvents
 local CabinetEvents = require(ReplicatedStorage.Shared.CabinetEvents)
+local PlayerController = require(script.PlayerController)
+
+-- Initialize player controller
+local controller = PlayerController.new()
 
 -- Track active cabinets and player states
 local activeCabinet = nil
 local isPlaying = false
 local isPlayer1 = false
-
--- Input handling
-local function handleInput(input, gameProcessed)
-    if not isPlaying or not activeCabinet then return end
-    
-    -- Handle keyboard input
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        if isPlayer1 then
-            -- Player 1 controls (W/S)
-            if input.KeyCode == Enum.KeyCode.W then
-                CabinetEvents.PlayerInput:FireServer(activeCabinet, "up", input.UserInputState == Enum.UserInputState.Begin)
-            elseif input.KeyCode == Enum.KeyCode.S then
-                CabinetEvents.PlayerInput:FireServer(activeCabinet, "down", input.UserInputState == Enum.UserInputState.Begin)
-            end
-        else
-            -- Player 2 controls (Up/Down arrows)
-            if input.KeyCode == Enum.KeyCode.Up then
-                CabinetEvents.PlayerInput:FireServer(activeCabinet, "up", input.UserInputState == Enum.UserInputState.Begin)
-            elseif input.KeyCode == Enum.KeyCode.Down then
-                CabinetEvents.PlayerInput:FireServer(activeCabinet, "down", input.UserInputState == Enum.UserInputState.Begin)
-            end
-        end
-    end
-    
-    -- Handle touch/gamepad input
-    if input.UserInputType == Enum.UserInputType.Touch or 
-       input.UserInputType == Enum.UserInputType.Gamepad1 then
-        local position = input.Position
-        if position then
-            local deltaY = position.Y - (input.Delta and input.Delta.Y or 0)
-            if math.abs(deltaY) > 0 then
-                CabinetEvents.PlayerInput:FireServer(activeCabinet, deltaY > 0 and "up" or "down", true)
-            end
-        end
-    end
-end
 
 -- Setup cabinet interaction
 local function setupCabinetInteraction()
@@ -69,8 +37,7 @@ local function setupCabinetInteraction()
             p1Prompt.Triggered:Connect(function(player)
                 if player == localPlayer then
                     CabinetEvents.PlayCabinet:FireServer(p1Part)
-                    activeCabinet = cabinet
-                    isPlayer1 = true
+                    controller:enterCabinet(cabinet, true)
                 end
             end)
             
@@ -78,8 +45,7 @@ local function setupCabinetInteraction()
             p2Prompt.Triggered:Connect(function(player)
                 if player == localPlayer then
                     CabinetEvents.PlayCabinet:FireServer(p2Part)
-                    activeCabinet = cabinet
-                    isPlayer1 = false
+                    controller:enterCabinet(cabinet, false)
                 end
             end)
         end
@@ -96,9 +62,8 @@ CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1
     
     if state == "ATTRACT_MODE" then
         -- Reset play state
-        if cabinet == activeCabinet then
-            isPlaying = false
-            activeCabinet = nil
+        if cabinet == controller.activeCabinet then
+            controller:exitCabinet()
         end
         -- Anyone can join as P1
         p1Prompt.Enabled = true
@@ -108,7 +73,6 @@ CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1
     elseif state == "WAITING_FOR_P2" then
         -- P1 can exit, others can join as P2
         if localPlayer == p1Player then
-            isPlaying = true
             p1Prompt.Enabled = true
             p1Prompt.ActionText = "Exit"
             p2Prompt.Enabled = false
@@ -120,9 +84,6 @@ CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1
         
     else -- PLAYING
         -- Each player sees their own exit prompt
-        if localPlayer == p1Player or localPlayer == p2Player then
-            isPlaying = true
-        end
         p1Prompt.Enabled = localPlayer == p1Player
         p2Prompt.Enabled = localPlayer == p2Player
         p1Prompt.ActionText = "Exit"
@@ -131,8 +92,16 @@ CabinetEvents.GameStateChanged.OnClientEvent:Connect(function(cabinet, state, p1
 end)
 
 -- Connect input handlers
-UserInputService.InputBegan:Connect(handleInput)
-UserInputService.InputEnded:Connect(handleInput)
-UserInputService.TouchMoved:Connect(handleInput)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    controller:handleInput(input, gameProcessed)
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    controller:handleInput(input, gameProcessed)
+end)
+
+UserInputService.TouchMoved:Connect(function(input, gameProcessed)
+    controller:handleInput(input, gameProcessed)
+end)
 
 setupCabinetInteraction()

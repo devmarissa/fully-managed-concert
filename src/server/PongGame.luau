@@ -59,6 +59,10 @@ function PongGame.new(cabinet)
     self.leftPaddle = controls:WaitForChild("leftPaddle")
     self.rightPaddle = controls:WaitForChild("rightPaddle")
     
+    -- Store original CFrames for the buttons
+    self.leftPaddleOriginalCFrame = self.leftPaddle.CFrame
+    self.rightPaddleOriginalCFrame = self.rightPaddle.CFrame
+    
     -- Initialize game state
     self.gameState = {
         state = GameState.ATTRACT_MODE,
@@ -220,6 +224,17 @@ function PongGame:positionPlayer(player: Player, position: number)
     humanoid.JumpPower = 0
     humanoid.AutoRotate = false
     
+    -- Set camera mode to first person
+    local player = Players:GetPlayerFromCharacter(character)
+    if player then
+        local camera = workspace.CurrentCamera
+        if camera then
+            camera.CameraType = Enum.CameraType.Custom
+            camera.CameraSubject = humanoid
+            camera.FieldOfView = 70
+        end
+    end
+    
     -- Disable specific states
     humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
     humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, false)
@@ -271,6 +286,14 @@ function PongGame:removePlayer(player: Player)
             humanoid.WalkSpeed = 16  -- Default walk speed
             humanoid.JumpPower = 50  -- Default jump power
             humanoid.AutoRotate = true
+            
+            -- Reset camera
+            local camera = workspace.CurrentCamera
+            if camera then
+                camera.CameraType = Enum.CameraType.Custom
+                camera.CameraSubject = humanoid
+                camera.FieldOfView = 70
+            end
             
             -- Re-enable specific states
             humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
@@ -400,32 +423,69 @@ function PongGame:updatePlaying(deltaTime: number)
 end
 
 function PongGame:handlePlayerInput(deltaTime: number)
-    -- Get current paddle positions
-    local p1Y = self.paddlePosition
-    local p2Y = self.aiPaddlePosition
-    
-    -- Apply any active movement
+    -- Handle P1 movement
     if self.p1Movement then
-        local direction = self.p1Movement == "up" and -1 or 1
-        p1Y = math.clamp(
-            p1Y + direction * PADDLE_SPEED * deltaTime,
-            MIN_PADDLE_Y,
-            MAX_PADDLE_Y
-        )
+        if self.p1Movement == "up" then
+            self.paddlePosition = math.max(MIN_PADDLE_Y, self.paddlePosition - PADDLE_SPEED * deltaTime)
+            -- Rotate left paddle button and update IK offset
+            if self.leftPaddle then
+                self.leftPaddle.CFrame = self.leftPaddleOriginalCFrame * CFrame.Angles(math.rad(-10), 0, 0)
+                if self.ikControls and self.ikControls[self.gameState.player1.UserId] then
+                    self.ikControls[self.gameState.player1.UserId].Offset = CFrame.new(0, 0.2, 0)
+                end
+            end
+        elseif self.p1Movement == "down" then
+            self.paddlePosition = math.min(MAX_PADDLE_Y, self.paddlePosition + PADDLE_SPEED * deltaTime)
+            -- Rotate left paddle button and update IK offset
+            if self.leftPaddle then
+                self.leftPaddle.CFrame = self.leftPaddleOriginalCFrame * CFrame.Angles(math.rad(10), 0, 0)
+                if self.ikControls and self.ikControls[self.gameState.player1.UserId] then
+                    self.ikControls[self.gameState.player1.UserId].Offset = CFrame.new(0, -0.2, 0)
+                end
+            end
+        end
+    else
+        -- Reset left paddle button rotation and IK offset
+        if self.leftPaddle then
+            self.leftPaddle.CFrame = self.leftPaddleOriginalCFrame
+            if self.ikControls and self.ikControls[self.gameState.player1.UserId] then
+                self.ikControls[self.gameState.player1.UserId].Offset = CFrame.new(0, 0, 0)
+            end
+        end
     end
     
-    if self.p2Movement then
-        local direction = self.p2Movement == "up" and -1 or 1
-        p2Y = math.clamp(
-            p2Y + direction * PADDLE_SPEED * deltaTime,
-            MIN_PADDLE_Y,
-            MAX_PADDLE_Y
-        )
+    -- Handle P2 movement
+    if self.gameState.player2 then
+        if self.p2Movement then
+            if self.p2Movement == "up" then
+                self.aiPaddlePosition = math.max(MIN_PADDLE_Y, self.aiPaddlePosition - PADDLE_SPEED * deltaTime)
+                -- Rotate right paddle button and update IK offset
+                if self.rightPaddle then
+                    self.rightPaddle.CFrame = self.rightPaddleOriginalCFrame * CFrame.Angles(math.rad(-10), 0, 0)
+                    if self.ikControls and self.ikControls[self.gameState.player2.UserId] then
+                        self.ikControls[self.gameState.player2.UserId].Offset = CFrame.new(0, 0.2, 0)
+                    end
+                end
+            elseif self.p2Movement == "down" then
+                self.aiPaddlePosition = math.min(MAX_PADDLE_Y, self.aiPaddlePosition + PADDLE_SPEED * deltaTime)
+                -- Rotate right paddle button and update IK offset
+                if self.rightPaddle then
+                    self.rightPaddle.CFrame = self.rightPaddleOriginalCFrame * CFrame.Angles(math.rad(10), 0, 0)
+                    if self.ikControls and self.ikControls[self.gameState.player2.UserId] then
+                        self.ikControls[self.gameState.player2.UserId].Offset = CFrame.new(0, -0.2, 0)
+                    end
+                end
+            end
+        else
+            -- Reset right paddle button rotation and IK offset
+            if self.rightPaddle then
+                self.rightPaddle.CFrame = self.rightPaddleOriginalCFrame
+                if self.ikControls and self.ikControls[self.gameState.player2.UserId] then
+                    self.ikControls[self.gameState.player2.UserId].Offset = CFrame.new(0, 0, 0)
+                end
+            end
+        end
     end
-    
-    -- Update positions
-    self.paddlePosition = p1Y
-    self.aiPaddlePosition = p2Y
 end
 
 function PongGame:updateAI(deltaTime: number)
@@ -749,12 +809,26 @@ end
 CabinetEvents.PlayerInput.OnServerEvent:Connect(function(player, cabinet, direction, isActive)
     -- Find the game instance for this cabinet
     for game in pairs(activeGames) do
-        if game.gameState.player1 == player then
-            game.p1Movement = isActive and direction or nil
-            return
-        elseif game.gameState.player2 == player then
-            game.p2Movement = isActive and direction or nil
-            return
+        if game.cabinet == cabinet then
+            -- Handle player 1 input
+            if game.gameState.player1 == player then
+                if direction == "start" or direction == "end" then
+                    game.p1Movement = nil
+                else
+                    game.p1Movement = isActive and direction or nil
+                end
+                return
+            end
+            
+            -- Handle player 2 input
+            if game.gameState.player2 == player then
+                if direction == "start" or direction == "end" then
+                    game.p2Movement = nil
+                else
+                    game.p2Movement = isActive and direction or nil
+                end
+                return
+            end
         end
     end
 end)

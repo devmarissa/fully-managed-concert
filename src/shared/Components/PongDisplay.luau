@@ -6,6 +6,8 @@ local PADDLE_WIDTH = 16
 local PADDLE_HEIGHT = 70
 local BALL_SIZE = 16
 local SCORE_TEXT_SIZE = 36
+local BORDER_WIDTH = 4
+local CENTER_LINE_SEGMENTS = 20
 
 -- Fixed dimensions based on SurfaceGui
 local FIXED_WIDTH = 858
@@ -24,6 +26,22 @@ local function getVerticalPosition(relativeY, elementHeight)
     return pixelY - elementHeight/4 - PADDLE_HEIGHT/4
 end
 
+local function createDashedLine()
+    local segments = {}
+    local segmentHeight = FIXED_HEIGHT / (CENTER_LINE_SEGMENTS * 2)
+    
+    for i = 0, CENTER_LINE_SEGMENTS - 1 do
+        segments[i + 1] = Roact.createElement("Frame", {
+            Size = UDim2.new(0, 2, 0, segmentHeight),
+            Position = UDim2.new(0.5, -1, 0, i * segmentHeight * 2),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        })
+    end
+    
+    return Roact.createFragment(segments)
+end
+
 local PongDisplay = Roact.Component:extend("PongDisplay")
 
 function PongDisplay:init()
@@ -39,12 +57,38 @@ function PongDisplay:render()
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
         BorderSizePixel = 0,
     }, {
+        -- Screen border
+        TopBorder = Roact.createElement("Frame", {
+            Size = UDim2.new(1, 0, 0, BORDER_WIDTH),
+            Position = UDim2.new(0, 0, 0, 0),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        }),
+        BottomBorder = Roact.createElement("Frame", {
+            Size = UDim2.new(1, 0, 0, BORDER_WIDTH),
+            Position = UDim2.new(0, 0, 1, -BORDER_WIDTH),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        }),
+        LeftBorder = Roact.createElement("Frame", {
+            Size = UDim2.new(0, BORDER_WIDTH, 1, 0),
+            Position = UDim2.new(0, 0, 0, 0),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        }),
+        RightBorder = Roact.createElement("Frame", {
+            Size = UDim2.new(0, BORDER_WIDTH, 1, 0),
+            Position = UDim2.new(1, -BORDER_WIDTH, 0, 0),
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+        }),
+
         -- Left paddle
         LeftPaddle = Roact.createElement("Frame", {
             Size = UDim2.new(0, PADDLE_WIDTH, 0, PADDLE_HEIGHT),
             Position = UDim2.new(
                 0, 
-                SCREEN_PADDING, 
+                SCREEN_PADDING + BORDER_WIDTH, 
                 0, 
                 getVerticalPosition(gameState.paddlePosition, PADDLE_HEIGHT)
             ),
@@ -57,7 +101,7 @@ function PongDisplay:render()
             Size = UDim2.new(0, PADDLE_WIDTH, 0, PADDLE_HEIGHT),
             Position = UDim2.new(
                 1, 
-                -SCREEN_PADDING - PADDLE_WIDTH, 
+                -SCREEN_PADDING - PADDLE_WIDTH - BORDER_WIDTH, 
                 0, 
                 getVerticalPosition(gameState.aiPaddlePosition, PADDLE_HEIGHT)
             ),
@@ -65,13 +109,13 @@ function PongDisplay:render()
             BorderSizePixel = 0,
         }),
 
-        -- Center line
+        -- Center line (container for dashed segments)
         CenterLine = Roact.createElement("Frame", {
             Size = UDim2.new(0, 2, 1, 0),
             Position = UDim2.fromScale(0.5, 0),
-            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BackgroundTransparency = 1,
             BorderSizePixel = 0,
-        }),
+        }, createDashedLine()),
 
         -- Ball
         Ball = Roact.createElement("Frame", {
