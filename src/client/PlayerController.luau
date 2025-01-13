@@ -14,6 +14,7 @@ function PlayerController.new()
     self.activeCabinet = nil
     self.isPlaying = false
     self.isPlayer1 = false
+    self.transparencyConnections = {}  -- Store connections for cleanup
     
     -- Connect character added event
     self.localPlayer.CharacterAdded:Connect(function(char)
@@ -33,53 +34,52 @@ function PlayerController:makePartsVisible(part)
     -- Check if R15 parts
     local isR15Arm = part.Name == "RightUpperArm" or 
                      part.Name == "RightLowerArm" or 
-                     part.Name == "RightHand" --[[ or
-                     part.Name == "LeftUpperArm" or 
-                     part.Name == "LeftLowerArm" or 
-                     part.Name == "LeftHand" ]]--
-                     
+                     part.Name == "RightHand"
     
     -- Check if R6 parts
-    local isR6Arm = part.Name == "Right Arm" --[[ or 
-                    part.Name == "Right Arm" ]]--
+    local isR6Arm = part.Name == "Right Arm"
     
+    -- Only modify arm parts
     if isR15Arm or isR6Arm then
         part.LocalTransparencyModifier = part.Transparency
-        part.Changed:Connect(function(property)
+        -- Store connection for cleanup
+        local connection = part.Changed:Connect(function(property)
             part.LocalTransparencyModifier = part.Transparency
         end)
+        self.transparencyConnections[part] = connection
     end
 end
 
 function PlayerController:setCharacterVisibility(visible: boolean)
     if not self.character then return end
     
+    -- Disconnect any existing connections
+    for _, connection in pairs(self.transparencyConnections) do
+        connection:Disconnect()
+    end
+    self.transparencyConnections = {}
+    
+    if self.childAddedConnection then
+        self.childAddedConnection:Disconnect()
+        self.childAddedConnection = nil
+    end
+    
     if visible then
-        -- Make character parts visible
+        -- Make arm parts visible with original transparency
         for _, part in pairs(self.character:GetChildren()) do
             self:makePartsVisible(part)
         end
         
         -- Connect to child added in case parts are added later
-        if self.childAddedConnection then
-            self.childAddedConnection:Disconnect()
-        end
-        
         self.childAddedConnection = self.character.ChildAdded:Connect(function(child)
             self:makePartsVisible(child)
         end)
     else
-        -- Make everything default visibility
+        -- Reset all transparency modifiers
         for _, part in pairs(self.character:GetChildren()) do
             if part:IsA("BasePart") then
                 part.LocalTransparencyModifier = 0
             end
-        end
-        
-        -- Disconnect child added connection
-        if self.childAddedConnection then
-            self.childAddedConnection:Disconnect()
-            self.childAddedConnection = nil
         end
     end
 end
