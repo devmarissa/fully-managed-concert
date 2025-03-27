@@ -1,0 +1,13 @@
+{
+    "port": 50583,
+    "places": [
+        {
+            "name": "fully-managed-concert",
+            "id": 0,
+            "file": "fully-managed-concert.rbxlx",
+            "sourcemap": {
+                "src": "src"
+            }
+        }
+    ]
+}

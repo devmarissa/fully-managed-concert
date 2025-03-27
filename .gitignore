@@ -6,3 +6,4 @@
 
 # keep my secrets secret!
 .env
+.cookie

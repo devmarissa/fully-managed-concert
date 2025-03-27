@@ -2,7 +2,7 @@ local downloadPlaceAsset = require("./lib/downloadPlaceAsset")
 local roblox = require("@lune/roblox")
 local fs = require("@lune/fs")
 
-local content = downloadPlaceAsset(129272607025831) -- replace with your own place id!
+local content = downloadPlaceAsset(104742960499551) -- replace with your own place id!
 local game = roblox.deserializePlace(content)
 
 if not fs.isDir("./map") then
@@ -13,23 +13,14 @@ if not fs.isDir("./assets") then
     fs.writeDir("./assets")
 end
 
--- Copy children to our containers
+-- Copy Workspace contents
 if game.Workspace then
-    local container = roblox.Instance.new("Folder")
-    container.Name = "Contents"
-    for _, child in game.Workspace:GetChildren() do
-        child:Clone().Parent = container
-    end
-    fs.writeFile("./map/Workspace.rbxm", roblox.serializeModel({container}))
+    fs.writeFile("./map/Workspace.rbxm", roblox.serializeModel({game.Workspace}))
 end
 
+-- Copy Lighting with all its properties
 if game.Lighting then
-    local container = roblox.Instance.new("Folder")
-    container.Name = "Contents"
-    for _, child in game.Lighting:GetChildren() do
-        child:Clone().Parent = container
-    end
-    fs.writeFile("./map/Lighting.rbxm", roblox.serializeModel({container}))
+    fs.writeFile("./map/Lighting.rbxm", roblox.serializeModel({game.Lighting}))
 end
 
 if game.ReplicatedStorage and game.ReplicatedStorage:FindFirstChild("Assets") then

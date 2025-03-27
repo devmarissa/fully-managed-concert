@@ -1,5 +1,5 @@
 {
-  "name": "fully-managed-cabinets",
+  "name": "fully-managed-concert",
   "tree": {
     "$className": "DataModel",
     
@@ -29,34 +29,6 @@
           "$path": "src/client"
         }
       }
-    },
-    
-    "Workspace": {
-      "$className": "Workspace",
-      "Cabinets": {
-        "$className": "Folder",
-        "SpaceInvaders": {
-          "$className": "Folder"
-        },
-        "Galaga": {
-          "$className": "Folder"
-        },
-        "Snake": {
-          "$className": "Folder"
-        },
-        "MonacoGP": {
-          "$className": "Folder"
-        },
-        "Pong": {
-          "$className": "Folder"
-        }
-      },
-      "$path": "map/Workspace.rbxm"
-    },
-    
-    "Lighting": {
-      "$className": "Lighting",
-      "$path": "map/Lighting.rbxm"
     },
     
     "SoundService": {
