@@ -3,8 +3,10 @@
     Makes cool effects happen with the music!
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TextChatService = game:GetService("TextChatService")
 local Types = require(ReplicatedStorage.shared.Types)
 local LightingEffects = require(script.LightingEffects)
 local DanceController = require(script.DanceController)
@@ -89,14 +91,6 @@ BeatEvent.OnClientEvent:Connect(function(data: Types.BeatUpdateData)
         -- Update dance controller with beat data
         danceController:onBeat(data)
         
-        -- Start dancing if not already started
-        if not CurrentSong.danceStarted then
-            print("[Client] Starting automatic dance")
-            task.wait(0.1) -- Give a small delay for preload
-            danceController:setDance("1")
-            CurrentSong.danceStarted = true
-        end
-        
         -- Start effect detection loop
         if not CurrentSong.effectLoop then
             CurrentSong.effectLoop = RunService.Heartbeat:Connect(function()
@@ -140,6 +134,72 @@ BeatEvent.OnClientEvent:Connect(function(data: Types.BeatUpdateData)
         end
     end
 end)
+
+-- Chat command handling
+local prefix = ":"  -- Using : as prefix for our commands
+
+-- Process a chat message and handle any commands
+local function handleChatCommand(message: string)
+    -- Convert to lowercase and split into arguments
+    local loweredString = string.lower(message)
+    local args = string.split(loweredString, " ")
+    
+    -- Handle dance command
+    if args[1] == prefix.."dance" then
+        -- If no dance number specified, default to 1
+        local danceIndex = args[2] or "1"
+        
+        -- Validate that danceIndex is a number
+        local danceNum = tonumber(danceIndex)
+        if danceNum then
+            print("[Client] Setting dance to:", danceNum)
+            -- Disable auto-advance when manually selecting a dance
+            danceController.state.autoAdvance = false
+            danceController:setDance(danceNum)
+            CurrentSong.danceStarted = true
+        else
+            print("[Client] Invalid dance number:", danceIndex)
+        end
+    elseif args[1] == prefix.."autoadvance" then
+        -- Add command to toggle auto-advance
+        danceController.state.autoAdvance = not danceController.state.autoAdvance
+        print("[Client] Auto-advance:", danceController.state.autoAdvance and "ON" or "OFF")
+    end
+end
+
+-- Set up chat command handling using TextChatService
+local function setupChatCommands()
+    -- Try TextChatService first (modern chat)
+    local success, _ = pcall(function()
+        TextChatService.MessageReceived:Connect(function(textChatMessage)
+            if textChatMessage.TextSource and textChatMessage.TextSource.UserId == Players.LocalPlayer.UserId then
+                handleChatCommand(textChatMessage.Text)
+            end
+        end)
+    end)
+    
+    if not success then
+        -- Fallback to legacy chat
+        local player = Players.LocalPlayer
+        if player then
+            player.Chatted:Connect(handleChatCommand)
+        end
+        
+        -- Also try to use StarterGui chat (another legacy method)
+        local StarterGui = game:GetService("StarterGui")
+        StarterGui:SetCore("ChatMakeSystemMessage", {
+            Text = "Chat commands initialized. Use :dance [number] to dance!",
+            Color = Color3.fromRGB(0, 255, 0)
+        })
+    end
+end
+
+-- Initialize chat commands when LocalPlayer is ready
+if Players.LocalPlayer then
+    setupChatCommands()
+else
+    Players:GetPropertyChangedSignal("LocalPlayer"):Connect(setupChatCommands)
+end
 
 -- Clean up when script is destroyed
 task.spawn(function()

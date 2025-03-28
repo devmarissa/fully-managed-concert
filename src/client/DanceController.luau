@@ -6,7 +6,6 @@
 --!strict
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local ContentProvider = game:GetService("ContentProvider")
 local KeyframeSequenceProvider = game:GetService("KeyframeSequenceProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.shared.Types)
@@ -25,22 +24,24 @@ export type DanceController = {
 }
 
 type DanceState = {
-    currentTrack: AnimationTrack?,
-    currentDanceConfig: DanceConfig?,
-    currentDanceId: string?,
+    currentTrack: AnimationTrack | nil,
+    currentDanceConfig: DanceConfig | nil,
+    currentDanceId: string | nil,
     currentBPM: number,
     currentBeat: number,
     beatCount: number,
     beatsPlayed: number,  
-    humanoid: Humanoid?,
-    animator: Animator?,
-    loopConnection: RBXScriptConnection?,
+    humanoid: Humanoid | nil,
+    animator: Animator | nil,
+    loopConnection: RBXScriptConnection | nil,
     lastBeatTime: number,
-    characterAddedConnection: RBXScriptConnection?,
-    character: Model?,
+    characterAddedConnection: RBXScriptConnection | nil,
+    character: Model | nil,
     waitingForBeatOne: boolean,
     autoAdvance: boolean,
-    preloadComplete: boolean
+    preloadComplete: boolean,
+    movementConnection: RBXScriptConnection | nil,
+    stateConnection: RBXScriptConnection | nil
 }
 
 type DanceConfig = {
@@ -68,7 +69,7 @@ local AnimationCache = {
 
 local DANCE_ANIMATIONS: {[string]: DanceConfig} = {
     ["1"] = { 
-        id = "87862418875672",
+        id = "135969890864340",
         beatsPerLoop = 8, 
         resetOnBeat = 1,
         beatCount = 8,
@@ -76,10 +77,10 @@ local DANCE_ANIMATIONS: {[string]: DanceConfig} = {
         currentBeatCount = 0
     },
     ["2"] = {
-        id = "138209040418667",
-        beatsPerLoop = 4,
+        id = "97830505935008",
+        beatsPerLoop = 8,
         resetOnBeat = 1,
-        beatCount = 4,
+        beatCount = 8,
         offset = 0,
         currentBeatCount = 0
     },
@@ -90,7 +91,23 @@ local DANCE_ANIMATIONS: {[string]: DanceConfig} = {
         beatCount = 16,
         offset = 0,
         currentBeatCount = 0
-    }
+    },
+    ["4"] = { 
+        id = "87862418875672",
+        beatsPerLoop = 8, 
+        resetOnBeat = 1,
+        beatCount = 8,
+        offset = 0,
+        currentBeatCount = 0
+    },
+    ["5"] = {
+        id = "138209040418667",
+        beatsPerLoop = 4,
+        resetOnBeat = 1,
+        beatCount = 4,
+        offset = 0,
+        currentBeatCount = 0
+    },
 }
 
 -- Private functions
@@ -189,6 +206,16 @@ local function updateAnimationSpeed(track: AnimationTrack, metadata: AnimationMe
     track:AdjustSpeed(targetSpeed)
 end
 
+local function calculateTimePosition(currentBeat: number, beatCount: number, _bpm: number, animLength: number): number
+    -- Calculate what fraction through the animation we should be based on the current beat
+    local beatProgress = (currentBeat - 1) / beatCount
+    
+    -- Calculate the target time position
+    local timePosition = beatProgress * animLength
+    
+    return timePosition
+end
+
 local function getNextDanceId(currentId: string?): string
     if not currentId then return "1" end
     
@@ -211,22 +238,24 @@ DanceController.__index = DanceController
 function DanceController.new()
     local self = setmetatable({
         state = {
-            currentTrack = nil,
-            currentDanceConfig = nil,
-            currentDanceId = nil,
+            currentTrack = nil :: AnimationTrack | nil,
+            currentDanceConfig = nil :: DanceConfig | nil,
+            currentDanceId = nil :: string | nil,
             currentBPM = DEFAULT_BPM,
             currentBeat = 0,
             beatCount = 0,
             beatsPlayed = 0,
-            humanoid = nil,
-            animator = nil,
-            loopConnection = nil,
+            humanoid = nil :: Humanoid | nil,
+            animator = nil :: Animator | nil,
+            loopConnection = nil :: RBXScriptConnection | nil,
             lastBeatTime = 0,
-            characterAddedConnection = nil,
-            character = nil,
+            characterAddedConnection = nil :: RBXScriptConnection | nil,
+            character = nil :: Model | nil,
             waitingForBeatOne = false,
             autoAdvance = true,
-            preloadComplete = false
+            preloadComplete = false,
+            movementConnection = nil :: RBXScriptConnection | nil,
+            stateConnection = nil :: RBXScriptConnection | nil
         }
     }, DanceController)
     
@@ -248,44 +277,82 @@ function DanceController:setupCharacterHandling()
     end
     
     -- Connect to character added event
-    self.state.characterAddedConnection = player.CharacterAdded:Connect(function(character: Model)
+    local characterAddedConnection = player.CharacterAdded:Connect(function(character: Model)
         print("[DanceController] Character added")
         self:handleCharacterAdded(character)
     end)
+    self.state.characterAddedConnection = characterAddedConnection :: RBXScriptConnection
 end
 
 function DanceController:handleCharacterAdded(character: Model?)
-    if not character then return end
-    
-    print("[DanceController] Character added")
-    
-    -- Clean up previous connections
-    if self.state.currentTrack then
-        self.state.currentTrack:Stop()
+    if not character then 
+        self.state.humanoid = nil :: Humanoid | nil
+        self.state.character = nil :: Model | nil
+        self.state.animator = nil :: Animator | nil
+        return 
     end
     
-    -- Wait for humanoid
-    print("[DanceController] Waiting for Humanoid...")
-    local humanoid = character:WaitForChild("Humanoid") :: Humanoid
-    if not humanoid then
-        warn("[DanceController] No Humanoid found")
-        return
+    -- Clean up old connections
+    if self.state.movementConnection then
+        self.state.movementConnection:Disconnect()
+    end
+    self.state.movementConnection = nil :: RBXScriptConnection | nil
+    
+    if self.state.stateConnection then
+        self.state.stateConnection:Disconnect()
+    end
+    self.state.stateConnection = nil :: RBXScriptConnection | nil
+    
+    -- Get humanoid
+    local humanoid = character:WaitForChild("Humanoid")
+    if not humanoid or not humanoid:IsA("Humanoid") then 
+        self.state.humanoid = nil :: Humanoid | nil
+        self.state.character = nil :: Model | nil
+        self.state.animator = nil :: Animator | nil
+        return 
     end
     
-    -- Wait for animator
-    print("[DanceController] Waiting for Animator...")
-    local animator = humanoid:WaitForChild("Animator") :: Animator
-    if not animator then
-        warn("[DanceController] No Animator found")
-        return
+    -- Get animator
+    local animator = humanoid:WaitForChild("Animator")
+    if not animator or not animator:IsA("Animator") then 
+        self.state.humanoid = nil :: Humanoid | nil
+        self.state.character = nil :: Model | nil
+        self.state.animator = nil :: Animator | nil
+        return 
     end
     
-    print("[DanceController] Found humanoid and animator")
+    -- Store references (using type assertion since we validated above)
+    self.state.humanoid = humanoid :: Humanoid
+    self.state.character = character :: Model
+    self.state.animator = animator :: Animator
     
-    -- Store references
-    self.state.humanoid = humanoid :: any
-    self.state.animator = animator :: any
-    self.state.character = character :: any
+    -- Monitor movement and state changes
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+    if rootPart and rootPart:IsA("BasePart") then
+        local connection = RunService.Heartbeat:Connect(function()
+            -- Check if character is moving or jumping
+            local velocity = rootPart.AssemblyLinearVelocity
+            local speed = (velocity * Vector3.new(1, 0, 1)).Magnitude  -- Horizontal speed only
+            
+            -- If moving or falling, stop dancing
+            if speed > 0.1 or velocity.Y < -0.1 then
+                self:stopDancing()
+            end
+        end)
+        self.state.movementConnection = connection :: RBXScriptConnection
+    end
+    
+    -- Monitor humanoid state changes
+    local stateConnection = humanoid.StateChanged:Connect(function(_, new: Enum.HumanoidStateType)
+        -- Stop dancing if jumping or falling
+        if new == Enum.HumanoidStateType.Jumping 
+            or new == Enum.HumanoidStateType.Freefall 
+            or new == Enum.HumanoidStateType.Running 
+            or new == Enum.HumanoidStateType.Swimming then
+            self:stopDancing()
+        end
+    end)
+    self.state.stateConnection = stateConnection :: RBXScriptConnection
     
     -- Preload animations
     self:preloadAnimations()
@@ -347,7 +414,7 @@ function DanceController:setDance(danceId: string | number)
     
     -- Set up animation handling
     if not self.state.loopConnection then
-        self.state.loopConnection = RunService.Heartbeat:Connect(function()
+        local loopConnection = RunService.Heartbeat:Connect(function()
             -- Get current dance config and track
             local currentDanceId = self.state.currentDanceId
             if not currentDanceId then return end
@@ -361,24 +428,8 @@ function DanceController:setDance(danceId: string | number)
             local currentLength = getAnimationLength(validateAnimationId(currentConfig.id) or "")
             if currentLength <= 0 then return end
             
-            -- If waiting for beat one, only start on beat one
-            if self.state.waitingForBeatOne then
-                if self.state.currentBeat == 1 then
-                    print("[DanceController] Starting dance on beat 1:", currentDanceId)
-                    self.state.waitingForBeatOne = false
-                    currentTrack:Play()
-                    -- Update speed after playing
-                    updateAnimationSpeed(currentTrack, {
-                        danceId = currentDanceId,
-                        originalLength = currentLength,
-                        beatsPerLoop = currentConfig.beatsPerLoop
-                    } :: AnimationMetadata, self.state.currentBPM)
-                end
-                return
-            end
-            
             -- If track should be playing but isn't, restart it
-            if not currentTrack.IsPlaying and not self.state.waitingForBeatOne then
+            if not currentTrack.IsPlaying then
                 currentTrack:Play()
                 -- Update speed after playing
                 updateAnimationSpeed(currentTrack, {
@@ -388,19 +439,30 @@ function DanceController:setDance(danceId: string | number)
                 } :: AnimationMetadata, self.state.currentBPM)
             end
         end)
+        self.state.loopConnection = loopConnection :: RBXScriptConnection
     end
     
-    -- Start playing if we're not waiting for beat one
-    if not self.state.waitingForBeatOne then
-        print("[DanceController] Playing dance immediately:", danceIdStr)
-        track:Play()
-        -- Update speed after playing
-        updateAnimationSpeed(track, {
-            danceId = danceIdStr,
-            originalLength = length,
-            beatsPerLoop = config.beatsPerLoop
-        } :: AnimationMetadata, self.state.currentBPM)
-    end
+    -- Calculate initial time position based on current beat
+    local timePosition = calculateTimePosition(
+        (self.state.currentBeat or 1) :: number,  
+        config.beatCount,
+        (self.state.currentBPM or 120) :: number,  
+        length
+    )
+    
+    print(string.format("[DanceController] Starting dance at time position: %.2f (beat %d/%d)", 
+        timePosition, (self.state.currentBeat or 1), config.beatCount))
+    
+    -- Play the track from the calculated time position
+    track:Play()
+    track.TimePosition = timePosition
+    
+    -- Update speed after playing
+    updateAnimationSpeed(track, {
+        danceId = danceIdStr,
+        originalLength = length,
+        beatsPerLoop = config.beatsPerLoop
+    } :: AnimationMetadata, self.state.currentBPM)
 end
 
 function DanceController:onBeat(beatData: Types.BeatData)
@@ -408,29 +470,34 @@ function DanceController:onBeat(beatData: Types.BeatData)
     
     -- Update BPM if changed
     if beatData.bpm and beatData.bpm ~= self.state.currentBPM then
-        self.state.currentBPM = beatData.bpm
-        print("[DanceController] Updated BPM to:", beatData.bpm)
+        local newBpm = math.floor(beatData.bpm + 0.5) -- Round to nearest integer
+        self.state.currentBPM = newBpm
+        print("[DanceController] Updated BPM to:", newBpm)
         
         if self.state.currentTrack and self.state.currentDanceConfig then
             local validId = validateAnimationId(self.state.currentDanceConfig.id)
             if validId then
-                updateAnimationSpeed(self.state.currentTrack, {
-                    danceId = self.state.currentDanceId or "",
-                    originalLength = getAnimationLength(validId),
-                    beatsPerLoop = self.state.currentDanceConfig.beatsPerLoop
-                } :: AnimationMetadata, beatData.bpm)
+                local length = getAnimationLength(validId)
+                if length and length > 0 then
+                    updateAnimationSpeed(self.state.currentTrack, {
+                        danceId = self.state.currentDanceId or "",
+                        originalLength = length,
+                        beatsPerLoop = self.state.currentDanceConfig.beatsPerLoop
+                    } :: AnimationMetadata, newBpm)
+                end
             end
         end
     end
     
     -- Update beat tracking
     if beatData.beatGrid and #beatData.beatGrid.beat_nums > 0 then
-        self.state.currentBeat = beatData.beatGrid.beat_nums[1]
+        local currentBeat = math.floor(beatData.beatGrid.beat_nums[1] + 0.5) -- Round to nearest integer
+        self.state.currentBeat = currentBeat
         self.state.beatCount = #beatData.beatGrid.beat_nums
     end
     
     -- Track beats played for current dance
-    if not self.state.waitingForBeatOne and self.state.currentTrack and self.state.currentTrack.IsPlaying then
+    if self.state.currentTrack and self.state.currentTrack.IsPlaying then
         self.state.beatsPlayed = (self.state.beatsPlayed or 0) + 1
         
         -- Check if we should advance to next dance
@@ -438,11 +505,6 @@ function DanceController:onBeat(beatData: Types.BeatData)
             if self.state.beatsPlayed >= self.state.currentDanceConfig.beatsPerLoop then
                 local nextDanceId = getNextDanceId(self.state.currentDanceId or "1")
                 print("[DanceController] Dance complete, advancing to:", nextDanceId)
-                -- Stop current track before waiting for beat one
-                if self.state.currentTrack then
-                    (self.state.currentTrack :: AnimationTrack):Stop(0.3)
-                end
-                self.state.waitingForBeatOne = true
                 self:setDance(nextDanceId)
             end
         end
@@ -450,29 +512,42 @@ function DanceController:onBeat(beatData: Types.BeatData)
 end
 
 function DanceController:stopDancing()
-    local track = self.state.currentTrack :: AnimationTrack
-    if track then
-        track:Stop(0.3)
+    if self.state.currentTrack then
+        self.state.currentTrack:Stop(0.3)
+        self.state.currentTrack = nil :: AnimationTrack | nil
     end
-    self.state.currentTrack = nil
-    self.state.currentDanceId = nil
-    self.state.currentDanceConfig = nil
+    self.state.currentDanceId = nil :: string | nil
+    self.state.currentDanceConfig = nil :: DanceConfig | nil
 end
 
 function DanceController:destroy()
     self:stopDancing()
-    if self.state.characterAddedConnection then
-        self.state.characterAddedConnection:Disconnect()
+    
+    -- Safely disconnect all connections
+    local connections = {
+        characterAddedConnection = self.state.characterAddedConnection,
+        loopConnection = self.state.loopConnection,
+        movementConnection = self.state.movementConnection,
+        stateConnection = self.state.stateConnection
+    }
+    
+    for _name, connection in pairs(connections) do
+        if connection then
+            connection:Disconnect()
+        end
     end
-    if self.state.loopConnection then
-        self.state.loopConnection:Disconnect()
-    end
+    
+    -- Clear all state
+    self.state.characterAddedConnection = nil :: RBXScriptConnection | nil
+    self.state.loopConnection = nil :: RBXScriptConnection | nil
+    self.state.movementConnection = nil :: RBXScriptConnection | nil
+    self.state.stateConnection = nil :: RBXScriptConnection | nil
     self.state = nil :: any
 end
 
 function DanceController:preloadAnimations()
-    if not self.state.humanoid then
-        warn("[DanceController] Cannot preload animations - no humanoid")
+    if not self.state.animator then
+        warn("[DanceController] Cannot preload animations - no animator")
         return
     end
     
@@ -482,7 +557,6 @@ function DanceController:preloadAnimations()
     self.state.preloadComplete = false
     AnimationCache.tracks = {}
     
-    local animations = {}
     for danceId, config in pairs(DANCE_ANIMATIONS) do
         local validId = validateAnimationId(config.id)
         if validId then
@@ -490,40 +564,24 @@ function DanceController:preloadAnimations()
             anim.AnimationId = validId
             
             -- Create animation track
-            local track = self.state.humanoid:LoadAnimation(anim)
+            local track = self.state.animator:LoadAnimation(anim)
             if track then
                 AnimationCache.tracks[danceId] = track
-                print("[DanceController] Created track for animation", danceId)
-            else
-                warn("[DanceController] Failed to create track for animation", danceId)
+                
+                -- Get animation length
+                local length = getAnimationLength(validId)
+                if length and length > 0 then
+                    print(string.format("[DanceController] Cached animation %s: length=%.2f", danceId, length))
+                end
             end
             
-            table.insert(animations, anim)
+            -- Clean up animation object
+            anim:Destroy()
         end
     end
     
-    -- Preload all animations
-    local success = pcall(function()
-        ContentProvider:PreloadAsync(animations)
-    end)
-    
-    if not success then
-        warn("[DanceController] Failed to preload animations")
-        return
-    end
-    
-    -- Load and cache animation lengths
-    for danceId, config in pairs(DANCE_ANIMATIONS) do
-        local validId = validateAnimationId(config.id)
-        if validId then
-            print("[DanceController] Preloaded animation", danceId)
-            local length = getAnimationLength(validId)
-            print("[DanceController] Animation", danceId, "length:", length)
-        end
-    end
-    
-    print("[DanceController] Preload complete")
     self.state.preloadComplete = true
+    print("[DanceController] Animation preload complete")
 end
 
 return DanceController
