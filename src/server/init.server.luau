@@ -6,7 +6,7 @@
 local MusicController = require(script.MusicController)
 
 print("Starting music server...")
-print("Playing test song with ID: 9046443555")
+print("Playing test song with ID: 5410086445")
 
 local controller = MusicController.new()
-controller:playSong("9046443555")
+controller:playSong("5410086445")

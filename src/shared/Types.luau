@@ -36,6 +36,17 @@ export type SongData = {
     asset_bpm: number?                -- Beats per minute
 }
 
+-- Beat data sent to clients
+export type BeatData = {
+    songId: string,
+    beatGrid: BeatGrid,
+    songSections: {SongSection}?,
+    firstBeatOffset: number?,
+    firstDownbeat: number?,
+    bpm: number?,
+    numBars: number?
+}
+
 -- Data sent to clients for beat/section updates
 export type BeatUpdateData = {
     songId: string,

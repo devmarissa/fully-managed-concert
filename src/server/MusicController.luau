@@ -109,13 +109,25 @@ function MusicController:playSong(songId: string)
     
     -- If we have beat data, send it to clients
     if songData and songData.beat_grid then
+        -- Calculate BPM from beat grid if not provided
+        local bpm = songData.asset_bpm
+        if not bpm or bpm == 0 then
+            -- Calculate BPM from first few beats
+            local beatGrid = songData.beat_grid
+            local numBeats = math.min(5, #beatGrid.beat_times)
+            if numBeats >= 2 then
+                local timeSpan = beatGrid.beat_times[numBeats] - beatGrid.beat_times[1]
+                bpm = ((numBeats - 1) / timeSpan) * 60
+            end
+        end
+        
         self.events.beat:FireAllClients({
             songId = songId,
             beatGrid = songData.beat_grid,
             songSections = songData.song_sections,
             firstBeatOffset = songData.asset_first_beat_offset,
             firstDownbeat = songData.asset_first_downbeat,
-            bpm = songData.asset_bpm,
+            bpm = bpm,
             numBars = songData.num_bars
         })
     end
