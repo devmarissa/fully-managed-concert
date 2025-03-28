@@ -60,9 +60,9 @@ BeatEvent.OnClientEvent:Connect(function(data: Types.BeatUpdateData)
         CurrentSong.currentSectionIndex = 1
         
         if data.beatGrid then
-            print(string.format("\nBeat Data Received:"))
-            print(string.format("BPM: %.1f", data.bpm or 0))
-            print(string.format("First Beat Offset: %.2fs", data.firstBeatOffset or 0))
+            print("Beat Data Received:")
+            print(string.format("BPM: %.1f", data.bpm or 0.0))
+            print(string.format("First Beat Offset: %.2fs", data.firstBeatOffset or 0.0))
             print(string.format("Number of Bars: %d", data.numBars or 0))
             
             -- Start effect detection loop

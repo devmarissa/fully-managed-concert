@@ -22,7 +22,7 @@ function MusicController.new()
         station = Instance.new("RemoteEvent"),
         beat = Instance.new("RemoteEvent"),
         song = Instance.new("RemoteEvent")
-    }
+    } :: {[string]: RemoteEvent}
     
     self.events.station.Name = "StationEvent"
     self.events.beat.Name = "BeatUpdate"
@@ -33,7 +33,7 @@ function MusicController.new()
     end
     
     -- State
-    self.currentSound = nil
+    self.currentSound = nil :: Sound?
     
     return self
 end
@@ -42,7 +42,7 @@ function MusicController:printSongData(songData: SongData)
     if songData.beat_grid then
         local numBeats = #songData.beat_grid.beat_nums
         local songLength = songData.beat_grid.beat_times[numBeats]
-        print(string.format("\n=== Song Info ==="))
+        print("\n=== Song Info ===")
         print(string.format("Duration: %.2f seconds", songLength))
         print(string.format("Total Beats: %d", numBeats))
         print(string.format("Bars: %d", songData.num_bars or 0))
@@ -83,10 +83,14 @@ function MusicController:playSong(songId: string)
         self:printSongData(songData)
     end
     
-    -- Stop current song if playing
+    -- Clean up previous sound if it exists
     if self.currentSound then
-        self.currentSound:Stop()
-        self.currentSound:Destroy()
+        local prevSound = self.currentSound 
+        task.spawn(function()
+            local sound: Sound = prevSound
+            sound:Stop()
+            sound:Destroy()
+        end)
     end
     
     -- Create and play the sound

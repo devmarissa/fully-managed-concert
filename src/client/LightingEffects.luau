@@ -38,7 +38,8 @@ end
 
 function LightingEffects:getColorForSection(sectionName: string): Color3
     -- Convert section name to lowercase and remove spaces
-    local cleanName = string.lower(string.gsub(sectionName, "%s+", ""))
+    local cleanName = string.lower(sectionName)
+    cleanName = string.gsub(cleanName, "%s+", "")
     
     -- Try to find a predefined color for this section
     if SECTION_COLORS[cleanName] then
