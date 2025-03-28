@@ -18,26 +18,25 @@ local StationEvent = ReplicatedStorage:WaitForChild("StationEvent")
 
 -- Initialize effects and controllers
 local beatEffects = {
-    doBeatEffect = function(_self: any, intensity: number, beatNum: number, _beatTime: number)
+    doBeatEffect = function(self: any, intensity: number, beatNum: number, _beatTime: number)
         -- TODO: Implement beat effects
         print("[BeatEffects] Beat effect:", beatNum, "Intensity:", intensity)
     end,
     
-    onBeat = function(_self, _currentTime: number, beatTime: number)
-        _self:doBeatEffect(1, 0, beatTime)
+    onBeat = function(self: any, currentTime: number, beatTime: number)
+        self:doBeatEffect(1, 0, beatTime)
     end,
     
-    onDownbeat = function(_self, _currentTime: number, beatTime: number) 
-        _self:doBeatEffect(1.5, 1, beatTime)
+    onDownbeat = function(self: any, currentTime: number, beatTime: number) 
+        self:doBeatEffect(1.5, 1, beatTime)
     end,
     
-    destroy = function(_self)
+    destroy = function(self: any)
         -- Nothing to clean up
     end
 }
 
 local lightingEffects = LightingEffects.new()
-local danceController = DanceController.new()
 
 -- Keep track of current song data
 local CurrentSong = {
@@ -48,151 +47,103 @@ local CurrentSong = {
     firstBeatOffset = nil,
     firstDownbeat = nil,
     startTime = 0,
-    currentBeatIndex = 1,
-    currentSectionIndex = 1,
-    danceStarted = false,
-    effectLoop = nil
+    currentBeat = 0,
+    currentBar = 0,
+    currentSection = nil,
 }
 
--- Handle station changes
-StationEvent.OnClientEvent:Connect(function(data)
-    if data and data.station then
-        print("Now playing station:", data.station)
+-- Handle chat commands
+local function handleChatCommand(message)
+    -- Check if it's a TextChatMessage
+    local messageText = if typeof(message) == "Instance" and message:IsA("TextChatMessage") 
+        then message.Text 
+        else message
+
+    if messageText:sub(1, 1) ~= ":" then return end
+    
+    local command = messageText:sub(2):lower()
+    if command:sub(1, 5) == "dance" then
+        local danceId = command:sub(7)
+        if danceId == "" then danceId = "1" end
+        print("[Client] Setting dance to:", danceId)
+        if danceController then
+            danceController:startDancing(danceId)
+        end
     end
-end)
+end
+
+local function setupChatCommands()
+    local textChat = TextChatService.TextChannels.RBXGeneral
+    textChat.MessageReceived:Connect(handleChatCommand)
+    print("[Client] Chat commands initialized")
+end
+
+-- Initialize controllers when LocalPlayer is ready
+local function initializeControllers()
+    if not Players.LocalPlayer then return end
+    
+    -- Create DanceController instance if not already created
+    if not danceController then
+        danceController = DanceController.new()
+    end
+    
+    task.spawn(function()
+        pcall(function()
+            danceController:init()
+            print("[Client] DanceController initialized")
+        end)
+    end)
+end
+
+if Players.LocalPlayer then
+    initializeControllers()
+else
+    Players:GetPropertyChangedSignal("LocalPlayer"):Connect(initializeControllers)
+end
+
+-- Set up beat handling
+local function onBeat(data)
+    if not danceController or not danceController.state then
+        warn("[Client] Dance controller not ready for beat event")
+        return
+    end
+    
+    -- Forward beat data
+    if typeof(danceController.onBeat) == "function" then
+        task.spawn(function()
+            danceController:onBeat({
+                beatNum = data.beatNum,
+                beatTime = data.beatTime,
+                bpm = data.bpm or CurrentSong.bpm
+            })
+        end)
+    end
+end
 
 -- Handle song changes
-SongEvent.OnClientEvent:Connect(function(songId)
+SongEvent.OnClientEvent:Connect(function(songId: string)
     print("Now playing:", songId)
-    CurrentSong.id = songId
-    CurrentSong.startTime = os.clock()
-    CurrentSong.currentBeatIndex = 1
-    CurrentSong.currentSectionIndex = 1
-    CurrentSong.danceStarted = false
 end)
 
 -- Handle beat updates
 BeatEvent.OnClientEvent:Connect(function(data: Types.BeatUpdateData)
-    if data then
-        CurrentSong.beatGrid = data.beatGrid
-        CurrentSong.songSections = data.songSections
-        CurrentSong.bpm = data.bpm
-        CurrentSong.firstBeatOffset = data.firstBeatOffset
-        CurrentSong.firstDownbeat = data.firstDownbeat
-        CurrentSong.startTime = os.clock()
-        CurrentSong.currentBeatIndex = 1
-        CurrentSong.currentSectionIndex = 1
-        
-        print("Beat Data Received:")
-        print(string.format("BPM: %.1f", data.bpm or 0.0))
-        print(string.format("First Beat Offset: %.2fs", data.firstBeatOffset or 0.0))
-        print(string.format("Number of Bars: %d", data.numBars or 0))
-        
-        -- Update dance controller with beat data
-        danceController:onBeat(data)
-        
-        -- Start effect detection loop
-        if not CurrentSong.effectLoop then
-            CurrentSong.effectLoop = RunService.Heartbeat:Connect(function()
-                local currentTime = os.clock() - CurrentSong.startTime
-                
-                -- Check for section changes
-                if CurrentSong.songSections then
-                    local nextSection = CurrentSong.songSections[CurrentSong.currentSectionIndex]
-                    if nextSection and currentTime >= nextSection.start_time then
-                        lightingEffects:transitionToSection(nextSection)
-                        CurrentSong.currentSectionIndex += 1
-                    end
-                end
-                
-                -- Check for beats
-                if CurrentSong.beatGrid and CurrentSong.beatGrid.beat_times then
-                    local nextBeatTime = CurrentSong.beatGrid.beat_times[CurrentSong.currentBeatIndex]
-                    if nextBeatTime and currentTime >= nextBeatTime then
-                        -- Get current beat number (1-4 pattern)
-                        local beatNum = CurrentSong.beatGrid.beat_nums[CurrentSong.currentBeatIndex]
-                        
-                        -- Update dance controller
-                        danceController:onBeat({
-                            beatNum = beatNum,
-                            beatCount = CurrentSong.currentBeatIndex,
-                            bpm = CurrentSong.bpm
-                        })
-                        
-                        -- Do beat effects
-                        if beatNum == 1 then
-                            beatEffects:onDownbeat(currentTime, nextBeatTime)
-                        else
-                            beatEffects:onBeat(currentTime, nextBeatTime)
-                        end
-                        
-                        -- Move to next beat
-                        CurrentSong.currentBeatIndex += 1
-                    end
-                end
-            end)
+    if not data then return end
+    
+    print("Beat Data Received:")
+    print("BPM:", data.bpm)
+    print("First Beat Offset:", tostring(data.firstBeatOffset or "nil") .. "s")
+    print("Number of Bars:", data.numBars)
+    
+    if danceController then
+        if danceController.onBeat then
+            danceController:onBeat(data)
         end
     end
+    if beatEffects and beatEffects.onBeat then
+        beatEffects:onBeat(data.currentTime, data.beatTime)
+    end
+    onBeat(data)
 end)
-
--- Chat command handling
-local prefix = ":"  -- Using : as prefix for our commands
-
--- Process a chat message and handle any commands
-local function handleChatCommand(message: string)
-    -- Convert to lowercase and split into arguments
-    local loweredString = string.lower(message)
-    local args = string.split(loweredString, " ")
-    
-    -- Handle dance command
-    if args[1] == prefix.."dance" then
-        -- If no dance number specified, default to 1
-        local danceIndex = args[2] or "1"
-        
-        -- Validate that danceIndex is a number
-        local danceNum = tonumber(danceIndex)
-        if danceNum then
-            print("[Client] Setting dance to:", danceNum)
-            -- Disable auto-advance when manually selecting a dance
-            danceController.state.autoAdvance = false
-            danceController:setDance(danceNum)
-            CurrentSong.danceStarted = true
-        else
-            print("[Client] Invalid dance number:", danceIndex)
-        end
-    elseif args[1] == prefix.."autoadvance" then
-        -- Add command to toggle auto-advance
-        danceController.state.autoAdvance = not danceController.state.autoAdvance
-        print("[Client] Auto-advance:", danceController.state.autoAdvance and "ON" or "OFF")
-    end
-end
-
--- Set up chat command handling using TextChatService
-local function setupChatCommands()
-    -- Try TextChatService first (modern chat)
-    local success, _ = pcall(function()
-        TextChatService.MessageReceived:Connect(function(textChatMessage)
-            if textChatMessage.TextSource and textChatMessage.TextSource.UserId == Players.LocalPlayer.UserId then
-                handleChatCommand(textChatMessage.Text)
-            end
-        end)
-    end)
-    
-    if not success then
-        -- Fallback to legacy chat
-        local player = Players.LocalPlayer
-        if player then
-            player.Chatted:Connect(handleChatCommand)
-        end
-        
-        -- Also try to use StarterGui chat (another legacy method)
-        local StarterGui = game:GetService("StarterGui")
-        StarterGui:SetCore("ChatMakeSystemMessage", {
-            Text = "Chat commands initialized. Use :dance [number] to dance!",
-            Color = Color3.fromRGB(0, 255, 0)
-        })
-    end
-end
 
 -- Initialize chat commands when LocalPlayer is ready
 if Players.LocalPlayer then
@@ -200,23 +151,3 @@ if Players.LocalPlayer then
 else
     Players:GetPropertyChangedSignal("LocalPlayer"):Connect(setupChatCommands)
 end
-
--- Clean up when script is destroyed
-task.spawn(function()
-    script.Destroying:Wait()
-    if beatEffects.destroy then
-        beatEffects:destroy()
-    end
-    if lightingEffects.destroy then
-        lightingEffects:destroy()
-    end
-    if danceController.destroy then
-        danceController:destroy()
-    end
-    
-    -- Clean up any running connections
-    if CurrentSong.effectLoop then
-        CurrentSong.effectLoop:Disconnect()
-        CurrentSong.effectLoop = nil
-    end
-end)
