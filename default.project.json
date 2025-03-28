@@ -4,16 +4,8 @@
     "$className": "DataModel",
     
     "ReplicatedStorage": {
-      "Shared": {
+      "shared": {
         "$path": "src/shared"
-      },
-      "init": {
-        "$path": "assets/init.luau",
-        "$className": "ModuleScript"
-      },
-      "Models": {
-        "$path": "assets/models",
-        "$className": "Folder"
       }
     },
     
