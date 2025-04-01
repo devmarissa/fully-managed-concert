@@ -51,28 +51,37 @@ function BeatEffects:doBeatEffect(intensity: number, beatNum: number, beatTime: 
     local camera = workspace.CurrentCamera
     if not camera then return end
     
-    -- Calculate FOV change based on intensity
-    local fovChange = 5 * intensity -- 5 degree change for normal beats, 7.5 for strong beats
-    local startFov = self.defaultFov or DEFAULT_FOV
-    
-    -- Zoom out
-    local outTween = TweenService:Create(camera, 
-        TweenInfo.new(TWEEN_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { FieldOfView = startFov + fovChange }
-    )
-    outTween:Play()
-    
-    -- Return to normal
-    task.delay(TWEEN_DURATION, function()
-        local inTween = TweenService:Create(camera, 
-            TweenInfo.new(TWEEN_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-            { FieldOfView = startFov }
+    local function onBeat(beatData: Types.BeatData)
+        if not beatData then return end
+        
+        print(string.format("[BeatEffects] Beat %d at %.3fs (BPM: %.1f)", 
+            beatData.beatNum or 0,
+            beatData.beatTime or 0,
+            beatData.bpm or 0
+        ))
+        
+        -- Calculate FOV change based on intensity
+        local fovChange = 5 * intensity -- 5 degree change for normal beats, 7.5 for strong beats
+        local startFov = self.defaultFov or DEFAULT_FOV
+        
+        -- Zoom out
+        local outTween = TweenService:Create(camera, 
+            TweenInfo.new(TWEEN_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            { FieldOfView = startFov + fovChange }
         )
-        inTween:Play()
-    end)
+        outTween:Play()
+        
+        -- Return to normal
+        task.delay(TWEEN_DURATION, function()
+            local inTween = TweenService:Create(camera, 
+                TweenInfo.new(TWEEN_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                { FieldOfView = startFov }
+            )
+            inTween:Play()
+        end)
+    end
     
-    -- Print beat info
-    print(string.format("Beat %d (%.2fs) - FOV: %.1f", beatNum, beatTime, startFov + fovChange))
+    onBeat({ beatNum = beatNum, beatTime = beatTime, bpm = 120 }) -- Assuming 120 BPM for now
 end
 
 return BeatEffects

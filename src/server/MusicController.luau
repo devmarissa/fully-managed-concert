@@ -1,6 +1,7 @@
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
+local Players = game:GetService("Players")
 local AudioScapeAPI = require(ReplicatedStorage.shared.AudioScapeAPI)
 local Types = require(ReplicatedStorage.shared.Types)
 
@@ -34,6 +35,28 @@ function MusicController.new()
     
     -- State
     self.currentSound = nil :: Sound?
+    self.currentBeat = nil
+    self.lastBeatTime = nil
+    self.beatGrid = nil
+    self.bpm = nil
+    self.currentSongData = nil
+    self.currentSongId = nil
+    
+    -- Set up player join handler
+    Players.PlayerAdded:Connect(function(player)
+        if self.currentSongId and self.currentSongData then
+            print("[MusicController] Sending current song data to new player:", player.Name)
+            self.events.song:FireClient(player, {
+                assetId = self.currentSongId,
+                beatGrid = self.currentSongData.beat_grid,
+                sections = self.currentSongData.song_sections,
+                bpm = self.currentSongData.asset_bpm,
+                firstBeatOffset = self.currentSongData.asset_first_beat_offset,
+                firstDownbeat = self.currentSongData.asset_first_downbeat,
+                numBars = self.currentSongData.num_bars
+            })
+        end
+    end)
     
     return self
 end
@@ -72,6 +95,46 @@ function MusicController:printSongData(songData: SongData)
     print("===============\n")
 end
 
+function MusicController:updateBeat()
+    if not self.currentSound or not self.currentSound.IsPlaying then return end
+    
+    local currentTime = self.currentSound.TimePosition
+    if not self.beatGrid then return end
+    
+    -- Find current beat
+    local beatNum = nil
+    local beatTime = nil
+    local nextBeatTime = nil
+    
+    for i, time in ipairs(self.beatGrid.beat_times) do
+        if currentTime < time then
+            -- Found next beat
+            nextBeatTime = time
+            if i > 1 then
+                beatNum = self.beatGrid.beat_nums[i-1]
+                beatTime = self.beatGrid.beat_times[i-1]
+            end
+            break
+        end
+    end
+    
+    -- Update current beat if changed
+    if beatNum and beatTime and (beatNum ~= self.currentBeat or not self.lastBeatTime or math.abs(beatTime - self.lastBeatTime) > 0.001) then
+        self.currentBeat = beatNum
+        self.lastBeatTime = beatTime
+        
+        -- Send beat update to clients
+        self.events.beat:FireAllClients({
+            beatNum = beatNum,
+            beatTime = beatTime,
+            nextBeatTime = nextBeatTime,
+            currentTime = currentTime
+        })
+        
+        print(string.format("[MusicController] Beat %d at %.3fs (Next: %.3fs)", beatNum, beatTime, nextBeatTime))
+    end
+end
+
 function MusicController:playSong(songId: string)
     print("Playing song:", songId)
     
@@ -102,10 +165,21 @@ function MusicController:playSong(songId: string)
     sound.Parent = SoundService
     
     self.currentSound = sound
+    self.currentSongData = songData
+    self.currentSongId = songId
+    
     sound:Play()
     
-    -- Tell clients about the new song
-    self.events.song:FireAllClients(songId)
+    -- Tell clients about the new song with all data
+    self.events.song:FireAllClients({
+        assetId = songId,
+        beatGrid = songData and songData.beat_grid,
+        sections = songData and songData.song_sections,
+        bpm = songData and songData.asset_bpm,
+        firstBeatOffset = songData and songData.asset_first_beat_offset,
+        firstDownbeat = songData and songData.asset_first_downbeat,
+        numBars = songData and songData.num_bars
+    })
     
     -- If we have beat data, send it to clients
     if songData and songData.beat_grid then
@@ -121,6 +195,9 @@ function MusicController:playSong(songId: string)
             end
         end
         
+        self.beatGrid = songData.beat_grid
+        self.bpm = bpm
+        
         self.events.beat:FireAllClients({
             songId = songId,
             beatGrid = songData.beat_grid,
@@ -130,6 +207,12 @@ function MusicController:playSong(songId: string)
             bpm = bpm,
             numBars = songData.num_bars
         })
+        
+        -- Start beat updates
+        while self.currentSound and self.currentSound.IsPlaying do
+            self:updateBeat()
+            task.wait(0.01)
+        end
     end
     
     -- Set up sound finished callback
